@@ -1567,6 +1567,11 @@ class Robot:
         out["last_seen_s_ago"] = None if last is None else round(now - last, 1)
         out["frames"] = f.get("frames", 0)
         out["moves"] = f.get("moves", 0)
+        if f.get("last_target"):
+            # Box in 0..1 of the picture (centre across, top and bottom down) and the
+            # move that frame gave; all zero means it held still.
+            out["last_target"] = f["last_target"]
+            out["last_command"] = f.get("last_command")
         if f.get("obstacle_stops"):
             out["obstacle_stops"] = f["obstacle_stops"]
         if f.get("ended_because"):
@@ -1673,6 +1678,15 @@ class Robot:
                 last_seen = time.monotonic()
                 info["last_seen"] = time.time()
                 vx, vy, wz = follow_command(det, car.telemetry.get("cm"), settings.obst_cm, tuning)
+                # What it saw and decided last, for status: it explains a car that holds still.
+                info["last_target"] = {
+                    "centre": round(det.cx, 2),
+                    "top": round(det.y0, 2),
+                    "bottom": round(det.y1, 2),
+                    "height": round(det.height, 2),
+                    "score": round(det.score, 2),
+                }
+                info["last_command"] = {"vx": vx, "vy": vy, "wz": wz}
                 if not (vx or vy or wz):
                     continue
                 try:
