@@ -38,6 +38,7 @@ PART_BINS = HUE_BINS * 2 + GREY_BINS
 PARTS = 3  # top half, bottom half, whole box
 MAX_PART_PIXELS = 64 * 64  # bigger crops are shrunk first: the histogram doesn't need more
 EDGE = 0.02  # a box this close to an edge of the picture is cut off there
+SAME_ONE = 0.5  # a box this much inside another (of its area) is taken as more of the same
 
 
 def open_picture(jpeg: bytes) -> Image.Image:
@@ -172,6 +173,23 @@ def size_change(candidate: Detection, last: Detection) -> float:
     return (across + up) / 2
 
 
+def cut_off(det: Detection) -> bool:
+    """Whether ``det``'s box reaches an edge of the picture, so part of it is out of view.
+    The detector is less sure of a person it sees only part of, close up."""
+    return det.x0 <= EDGE or det.y0 <= EDGE or det.x1 >= 1 - EDGE or det.y1 >= 1 - EDGE
+
+
+def overlap(a: Detection, b: Detection) -> float:
+    """How much of the smaller of two boxes is inside the other, from 0 to 1. The detector
+    sometimes boxes a person's legs as well as all of them, and that box is all inside theirs."""
+    across = min(a.x1, b.x1) - max(a.x0, b.x0)
+    up = min(a.y1, b.y1) - max(a.y0, b.y0)
+    smaller = min(a.width * a.height, b.width * b.height)
+    if across <= 0 or up <= 0 or smaller <= 0:
+        return 0.0
+    return across * up / smaller
+
+
 def _times(change: float) -> str:
     return f"{math.exp(abs(change)):.1f}× {'bigger' if change > 0 else 'smaller'}"
 
@@ -215,7 +233,8 @@ def choose(
     its size change (``size_change``), and less ``score_weight`` times how much less sure
     the detector is of it than ``typical_score``, how sure it usually is of the target: a
     chair or a coat on a hook taken for a person is taken with less confidence than a
-    person standing in view. ``unsure`` when the runner-up scores within ``margin``.
+    person standing in view. ``unsure`` when the runner-up scores within ``margin``; a box
+    mostly inside the chosen one's (``SAME_ONE``) is more of the same, not a runner-up.
     """
     if not candidates:
         return Choice(None, None, False, "none in view")
@@ -256,8 +275,9 @@ def choose(
         return Choice(None, matches[best], False, why, tuple(matches), tuple(notes))
     scored.sort(reverse=True)
     index = scored[0][1]
-    unsure = len(scored) > 1 and scored[0][0] - scored[1][0] < margin
+    rivals = [(s, i) for s, i in scored[1:] if overlap(candidates[i], candidates[index]) <= SAME_ONE]
+    unsure = bool(rivals) and scored[0][0] - rivals[0][0] < margin
     why = f"match {matches[index]:.2f}"
     if unsure:
-        why += f", but another one in view looks almost as alike ({matches[scored[1][1]]:.2f})"
+        why += f", but another one in view looks almost as alike ({matches[rivals[0][1]]:.2f})"
     return Choice(index, matches[index], unsure, why, tuple(matches), tuple(notes))

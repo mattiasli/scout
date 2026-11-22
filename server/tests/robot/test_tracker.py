@@ -24,7 +24,16 @@ from scout.robot.follow import (
     plan,
 )
 from scout.robot.imaging import GREEN, YELLOW, annotate, crop, jpeg_size
-from scout.robot.tracker import Appearance, choose, describe, open_picture, similarity, size_change
+from scout.robot.tracker import (
+    Appearance,
+    choose,
+    cut_off,
+    describe,
+    open_picture,
+    overlap,
+    similarity,
+    size_change,
+)
 
 RED, BLUE, OLIVE, MUSTARD = (200, 30, 30), (30, 40, 160), (40, 160, 60), (220, 200, 40)
 LEFT = (0.10, 0.10, 0.36, 0.95)
@@ -193,6 +202,26 @@ def test_the_one_the_detector_is_surer_of_wins_between_look_alikes() -> None:
     assert tied.unsure  # alike in every other way
     choice = choose([me_now, rack], [look, look], me, None, min_match=0.45, typical_score=0.85)
     assert choice.index == 0 and not choice.unsure
+
+
+def test_a_box_on_part_of_the_target_is_no_rival() -> None:
+    # Close up, the detector boxed a person and their legs as well.
+    img = scene((LEFT, RED, BLUE))
+    me = Appearance.of(describe(img, person(LEFT)))
+    body, legs = person(LEFT), person((0.14, 0.55, 0.32, 0.95), score=0.7)
+    assert overlap(body, legs) == pytest.approx(1.0) and overlap(legs, body) == pytest.approx(1.0)
+    assert overlap(body, person(RIGHT)) == 0.0
+    look = describe(img, body)
+    choice = choose([body, legs], [look, look], me, None, min_match=0.45, typical_score=0.85, margin=0.5)
+    assert choice.index == 0 and not choice.unsure
+    assert choose([body, person(RIGHT)], [look, look], me, None, min_match=0.45, margin=0.5).unsure
+
+
+def test_cut_off() -> None:
+    assert not cut_off(person(LEFT))
+    assert cut_off(person((0.3, 0.0, 0.7, 0.9)))  # head out of the picture
+    assert cut_off(person((0.3, 0.1, 0.7, 1.0)))  # close up, cut off at the knees
+    assert cut_off(person((0.0, 0.1, 0.2, 0.9)))  # stepping out on the left
 
 
 def test_a_box_cut_off_at_an_edge_may_be_bigger_than_it_looks() -> None:
