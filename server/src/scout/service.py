@@ -189,7 +189,7 @@ class ToolService:
                     car_id, target=a["target"], seconds=a["seconds"], pick=a.get("pick")
                 )
             case "follow_view":
-                return await robot.follow_view(car_id)
+                return await robot.follow_view(car_id, wait_s=a["wait_s"])
         raise Refused(f"Scout has no tool called {spec.name!r}.")  # pragma: no cover
 
     # ----------------------------------------------------------------- results

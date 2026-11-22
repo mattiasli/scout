@@ -224,8 +224,8 @@ class FakeRobot:
     ) -> ActionResult:
         return await self._act("follow", images=1, car_id=car_id, target=target, seconds=seconds, pick=pick)
 
-    async def follow_view(self, car_id: str) -> ActionResult:
-        return await self._act("follow_view", images=2, car_id=car_id)
+    async def follow_view(self, car_id: str, *, wait_s: int = 0) -> ActionResult:
+        return await self._act("follow_view", images=2, car_id=car_id, wait_s=wait_s)
 
 
 class FakeGitHub:

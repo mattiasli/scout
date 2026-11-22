@@ -43,6 +43,7 @@ FOLLOW_SECONDS: Range = (5, 300)
 FOLLOW_SECONDS_DEFAULT = 60
 FOLLOW_TARGET_DEFAULT = "cat"
 PICK: Range = (1, 20)  # robot.MAX_PICK: find numbers at most 20 boxes
+FOLLOW_VIEW_WAIT: Range = (0, 30)
 # scout/robot/captures.py: capture ids are 12-64 URL-safe characters.
 CAPTURE_ID_PATTERN = "^[A-Za-z0-9_-]{12,64}$"
 # robot.capture_photo keeps at most this much of a note (after collapsing whitespace).
@@ -89,9 +90,11 @@ because there is no gyroscope, so check with look.
 - Pass look=true to move, turn and drive to get a picture afterwards in the same call.
 - To follow a particular person or thing, call find to get the objects in view numbered, \
 then follow with pick set to the right number. Check with follow_view now and then that \
-it is still on the right one; pick again or call stop to take over if it isn't. When follow \
-isn't sure it has the right one (status follow.checking says why), it only turns to keep it \
-in view and doesn't drive: look with follow_view and confirm with follow pick set to its number.
+it is still on the right one: call follow_view with wait_s 10 again and again until follow \
+ends; it returns early when follow needs you. Pick again or call stop to take over if it's \
+following the wrong one. When follow isn't sure it has the right one (status follow.checking \
+says why), it only turns to keep it in view and doesn't drive until you confirm with follow \
+pick set to its number.
 - One person drives at a time. Call release_car when you're done; the car is also \
 released after 2 minutes without commands.
 - Call stop at once if anything looks wrong.
@@ -367,7 +370,8 @@ TOOLS: list[ToolSpec] = [
             "(the target in a green box), and it follows for up to `seconds` "
             f"({_span(FOLLOW_SECONDS)}, default {FOLLOW_SECONDS_DEFAULT}). It ends when the time is "
             "up, when a search finds nothing, or when you call stop or send any move, which also "
-            "hands the car back to you. Calling follow again with a new pick switches target."
+            "hands the car back to you. Calling follow again with a new pick switches target. Watch "
+            "it by calling follow_view with wait_s 10 again and again until it ends."
         ),
         properties={
             "target": _enum(
@@ -396,8 +400,20 @@ TOOLS: list[ToolSpec] = [
             "right number in this picture to switch, or call stop or any move to take over. Also "
             "returns how alike the target looks to the original (match, 0 to 1), whether another "
             "candidate looks almost as alike, whether it is searching, whether it is holding back from "
-            "driving until it's sure (and why), and what it did last. It doesn't move the car."
+            "driving until it's sure (and why), and what it did last. It doesn't move the car. With "
+            "wait_s it first waits up to that many seconds for something that needs you: follow "
+            "holding back until you confirm, losing the target, another one close by looking almost as "
+            "alike, or follow ending. It returns as soon as one happens (woke_because says which), so "
+            "calling it again and again with wait_s 10 watches a follow."
         ),
+        properties={
+            "wait_s": _int(
+                FOLLOW_VIEW_WAIT,
+                f"Seconds to wait first for something that needs you ({_span(FOLLOW_VIEW_WAIT)}, "
+                "default 0, which returns at once).",
+                0,
+            ),
+        },
         read_only=True,
     ),
     ToolSpec(

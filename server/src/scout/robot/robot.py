@@ -226,6 +226,9 @@ class _Car:
     follow: dict[str, Any] | None = None
     follow_view: _FollowView | None = None
     follow_reference: bytes | None = None  # a close-up of the target as follow locked on
+    # Set when follow has something the AI watching should look at (see _wake); replaced
+    # by a fresh one each time, so a follow_view waiting on it wakes once.
+    follow_wake: asyncio.Event = field(default_factory=asyncio.Event)
     pickable: _Pickable | None = None
     moving: bool = False
     capturing: bool = False
@@ -386,6 +389,7 @@ class _Checking:
     why: str
     baseline: float | None  # how sure the detector usually was of the target, before
     streak: int = 0  # sure sightings in a row since
+    needs_pick: bool = False  # only the AI can settle it, by picking
 
 
 def _check(
@@ -397,6 +401,7 @@ def _check(
     *,
     found_again: bool,
     confirmed: bool,
+    lookalikes: bool = False,
     score_drop: float,
     confirm_frames: int,
 ) -> _Checking | None:
@@ -404,10 +409,15 @@ def _check(
 
     ``confirmed`` means the AI picked this one and follow hasn't lost it since; a look-alike
     close by is then no reason to doubt it, because the AI saw both when it picked.
+    ``lookalikes`` means another one that looks alike has been in view during this follow:
+    found again after losing it, it may be that other one, which nothing but the AI
+    looking can rule out, so it holds until a pick.
     """
     doubt = None
     if found_again:
         doubt = f"it lost sight of the {label} and has found one again"
+        if lookalikes:
+            doubt += f", and another {label} that looks alike has been in view, so it needs a pick to go on"
     elif typical_score is not None and det.score < score_drop * typical_score:
         doubt = (
             f"the detector is much less sure this is a {label} ({det.score:.2f}, "
@@ -416,9 +426,12 @@ def _check(
     elif choice.unsure and not confirmed:
         doubt = choice.why
     if doubt is not None and (checking is None or found_again):
-        checking = _Checking(doubt, typical_score if checking is None else checking.baseline)
+        baseline = typical_score if checking is None else checking.baseline
+        checking = _Checking(doubt, baseline, needs_pick=found_again and lookalikes)
     if checking is None:
         return None
+    if checking.needs_pick:
+        return checking
     sure = (
         choice.match is not None
         and choice.match >= LEARN_MATCH
@@ -427,6 +440,15 @@ def _check(
     )
     checking.streak = checking.streak + 1 if sure else 0
     return None if checking.streak >= confirm_frames else checking
+
+
+def _wake(car: _Car, what: str) -> None:
+    """Note something the AI watching follow should look at, and wake any follow_view
+    waiting for it."""
+    if car.follow is not None:
+        car.follow["event"] = what
+    wake, car.follow_wake = car.follow_wake, asyncio.Event()
+    wake.set()
 
 
 def _monotonic(wall: float) -> float:
@@ -1341,8 +1363,10 @@ class Robot:
         }
         images: list[bytes] = []
         check = (
-            " Check now and then with follow_view that it's the right one. To switch, call follow with "
-            "pick set to a number from that picture; to take over, call stop or any move."
+            " Keep watching it: call follow_view with wait_s 10 again and again until follow ends. Each "
+            "call returns early when follow needs you (it has lost the target, found one again, or isn't "
+            "sure), with a picture to check. To switch, call follow with pick set to a number from that "
+            "picture; to take over, call stop or any move."
         )
         if view is not None and view.chosen is not None:
             image, listing, order = await asyncio.to_thread(_render_view, view)
@@ -1374,10 +1398,26 @@ class Robot:
         data["summary"] = summary + check
         return ActionResult(data, images=images)
 
-    async def follow_view(self, car_id: str) -> ActionResult:
+    async def follow_view(self, car_id: str, *, wait_s: int = 0) -> ActionResult:
         """The latest picture follow acted on, with the target and other candidates boxed
-        and numbered, and the target as it was when follow locked on."""
+        and numbered, and the target as it was when follow locked on.
+
+        With ``wait_s``, it first waits up to that long for something the AI should look
+        at (follow holding back, losing the target, a look-alike close by, or ending), and
+        returns as soon as one happens."""
+        wait_s = _int_arg("wait_s", wait_s, 0, 30)
         car = self._cars.get(car_id)
+        woke: str | None = None
+        waited = bool(
+            wait_s and car is not None and car.follow is not None and car.follow.get("state") != "ended"
+        )
+        if waited and car is not None:
+            wake = car.follow_wake
+            with suppress(TimeoutError):
+                async with asyncio.timeout(wait_s):
+                    await wake.wait()
+            if wake.is_set() and car.follow is not None:
+                woke = car.follow.get("event")
         if car is None or car.follow is None:
             name = car.name if car is not None else "The car"
             return ActionResult(
@@ -1434,18 +1474,19 @@ class Robot:
         if state != "ended":
             summary += (
                 " If it's following the wrong one, call follow with pick set to a number from this picture, "
-                "or call stop or any move to take over."
+                "or call stop or any move to take over. To keep watching, call follow_view with wait_s 10."
             )
-        return ActionResult(
-            {
-                "result": state,
-                "follow": status,
-                "picture_age_s": age,
-                "in_view": listing,
-                "summary": summary,
-            },
-            images=images,
-        )
+        data: dict[str, Any] = {
+            "result": state,
+            "follow": status,
+            "picture_age_s": age,
+            "in_view": listing,
+        }
+        if waited:
+            data["woke_because"] = woke  # None: nothing happened while it waited
+            summary = (f"Woke because {woke}. " if woke else f"Nothing new in {wait_s} s. ") + summary
+        data["summary"] = summary
+        return ActionResult(data, images=images)
 
     # -- building blocks -----------------------------------------------------------
 
@@ -1979,6 +2020,8 @@ class Robot:
         if f.get("checking"):
             # Why it only turns and tilts, not driving, until it's sure or a pick confirms.
             out["checking"] = f["checking"]
+        if f.get("event"):
+            out["last_event"] = f["event"]  # the latest thing that woke follow_view
         if f.get("search"):
             out["search"] = f["search"]
         if f.get("searches"):
@@ -2062,6 +2105,8 @@ class Robot:
         typical_score = target.score if target is not None else None  # the detector's, usually
         confirmed = target is not None  # the AI picked it, and follow hasn't lost it since
         checking: _Checking | None = None
+        lookalikes = False  # another one that looks alike has been in view
+        unsure_woke = -math.inf  # when a look-alike close by last woke the AI
         search: Search | None = None
         misses = 0
         last_frame = started
@@ -2154,6 +2199,12 @@ class Robot:
                 )
                 info["in_view"] = len(candidates)
                 info["choice"] = choice.why
+                for i, m in enumerate(choice.matches):
+                    plausible = (
+                        typical_score is None or candidates[i].score >= cfg.follow_score_drop * typical_score
+                    )
+                    if i != choice.index and m >= cfg.follow_match_min and plausible:
+                        lookalikes = True
                 det: Detection | None = None
                 if choice.index is not None:
                     det = candidates[choice.index]
@@ -2164,6 +2215,7 @@ class Robot:
                         appearance = Appearance.of(descriptions[choice.index])
                         car.follow_reference = await asyncio.to_thread(crop, frame, _box(det))
                     else:
+                        was = checking.why if checking is not None else None
                         checking = _check(
                             checking,
                             choice,
@@ -2172,9 +2224,15 @@ class Robot:
                             typical_score,
                             found_again=found_again,
                             confirmed=confirmed,
+                            lookalikes=lookalikes,
                             score_drop=cfg.follow_score_drop,
                             confirm_frames=cfg.follow_confirm_frames,
                         )
+                        if checking is not None and checking.why != was:
+                            _wake(car, f"follow is holding back from driving, as {checking.why}")
+                        elif checking is None and choice.unsure and time.monotonic() - unsure_woke > 10:
+                            unsure_woke = time.monotonic()
+                            _wake(car, f"another {label} in view looks almost as alike as the one it follows")
                     if checking is not None:
                         sure = 0  # nothing learnt from what may be something else
                     else:
@@ -2220,6 +2278,7 @@ class Robot:
                         continue  # one empty frame can be a missed detection: look again
                     if search is None:
                         confirmed = False  # what it finds next may be something else
+                        _wake(car, f"it lost sight of the {label} and is looking for it")
                         if target is None:
                             search = Search(label, "scan")
                         else:
@@ -2317,6 +2376,7 @@ class Robot:
             info["ended_because"] = reason
             if car.behaviour is beh:
                 car.behaviour = None
+            _wake(car, f"follow ended: {reason}")
             beh.ready.set()
             beh.finished.set()
             self._release_detector()

@@ -291,7 +291,9 @@ async def test_arguments_and_defaults_reach_the_robot(world: World) -> None:
     await world.call(world.alice, "follow_view", {})
     calls = dict(world.robot.calls)
     assert calls["follow"] == {"car_id": "scout-1", "target": "cat", "seconds": 60, "pick": 3}
-    assert calls["follow_view"] == {"car_id": "scout-1"}
+    assert calls["follow_view"] == {"car_id": "scout-1", "wait_s": 0}
+    await world.call(world.alice, "follow_view", {"wait_s": 10})
+    assert world.robot.calls[-1][1] == {"car_id": "scout-1", "wait_s": 10}
 
 
 async def test_whole_number_floats_are_accepted(world: World) -> None:
