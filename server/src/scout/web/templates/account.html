@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "_commands.html" import install_commands %}
+{% block title %}Your account · Scout{% endblock %}
+{% block content %}
+<h1>Your account</h1>
+<div class="profile">
+  {% if user.avatar_url %}<img src="{{ user.avatar_url }}" alt="" width="48" height="48" class="avatar">{% endif %}
+  <div>
+    <p class="name">{{ user.display_name }} <span class="muted">@{{ user.login }}</span></p>
+    <p>
+      {% if user.status == "active" %}<span class="tag ok">Approved</span>
+      {% elif user.status == "waiting" %}<span class="tag wait">Waiting for approval</span>
+      {% else %}<span class="tag bad">Suspended</span>{% endif %}
+      {% if user.is_owner %}<span class="tag">Owner</span>{% elif user.admin %}<span class="tag">Admin</span>{% endif %}
+    </p>
+  </div>
+</div>
+{% if user.status == "waiting" %}
+<p class="note">Your account is waiting for an admin to approve it. You can make a token now; it starts working once you're approved.</p>
+{% elif user.status == "suspended" %}
+<p class="note bad">Your account is suspended, so your tokens don't work. Ask an admin if you think that's a mistake.</p>
+{% endif %}
+
+{% if new_token %}
+<section class="new-secret" aria-labelledby="new-token">
+  <h2 id="new-token">Your new token "{{ new_token_label }}"</h2>
+  <p><strong>Copy it now.</strong> Scout keeps only a fingerprint, so this is the only time you'll see it.</p>
+  <pre class="secret"><code>{{ new_token }}</code></pre>
+  <h3>Add Scout to your AI</h3>
+  {{ install_commands(new_token, true) }}
+</section>
+{% endif %}
+
+<section aria-labelledby="tokens">
+  <h2 id="tokens">Tokens</h2>
+  <p>A token lets an AI client use Scout as you. Make one per client so you can revoke them separately.</p>
+  {% if tokens %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Label</th><th scope="col">Starts with</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr>
+        <td>{{ t.label }}</td>
+        <td><code>{{ t.prefix }}…</code></td>
+        <td>{{ t.created_at | when }}</td>
+        <td>{{ t.last_used_at | ago }}</td>
+        <td>
+          <form method="post" action="/account/tokens/{{ t.id }}/revoke" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger small" aria-label="Revoke token {{ t.label }}">Revoke</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">You don't have any tokens yet.</p>
+  {% endif %}
+  {% if user.status != "suspended" %}
+  <form method="post" action="/account/tokens" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="label">Label</label>
+    <input id="label" name="label" maxlength="60" placeholder="For example: Claude Code on my laptop" required>
+    <button type="submit">Make a token</button>
+  </form>
+  {% endif %}
+</section>
+
+<section aria-labelledby="captures">
+  <h2 id="captures">Your captures</h2>
+  {% if captures %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Capture</th><th scope="col">Taken</th><th scope="col">Photos</th><th scope="col"><span class="visually-hidden">Download</span></th></tr></thead>
+    <tbody>
+    {% for c in captures %}
+      <tr>
+        <td><code>{{ c.capture_id }}</code></td>
+        <td>{% if c.created is not none %}{{ c.created | when }}{% else %}{{ c.created_text or "" }}{% endif %}</td>
+        <td>{{ c.photos }}</td>
+        <td><a href="/captures/{{ c.capture_id }}.zip" download>Download zip</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">Photos you save with <code>capture_photo</code> or <code>capture_orbit</code> show up here.</p>
+  {% endif %}
+</section>
+{% endblock %}

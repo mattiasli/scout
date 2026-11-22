@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>{% block title %}Scout{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ version }}">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <nav aria-label="Main">
+    <a class="brand" href="/">Scout</a>
+    <ul>
+      <li><a href="/install"{% if page == "install" %} aria-current="page"{% endif %}>Connect an AI</a></li>
+      {% if user %}
+      <li><a href="/account"{% if page == "account" %} aria-current="page"{% endif %}>Account</a></li>
+      {% if user.admin %}
+      <li><a href="/admin"{% if page.startswith("admin") %} aria-current="page"{% endif %}>Admin{% if waiting_count %} <span class="badge"><span class="visually-hidden">(</span>{{ waiting_count }}<span class="visually-hidden"> waiting)</span></span>{% endif %}</a></li>
+      {% endif %}
+      <li>
+        <form method="post" action="/logout" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="link">Sign out</button>
+        </form>
+      </li>
+      {% else %}
+      <li><a class="button small" href="/login">Sign in with GitHub</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+</header>
+<main id="main">
+  {% for m in messages %}
+  <p class="flash {{ m.kind }}" role="{{ 'alert' if m.kind == 'error' else 'status' }}">{{ m.text }}</p>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="site">
+  <p>Scout {{ version }} · <a href="https://github.com/mattiasli/scout">Source on GitHub</a></p>
+</footer>
+</body>
+</html>

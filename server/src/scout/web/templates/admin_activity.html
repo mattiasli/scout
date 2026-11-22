@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Activity · Admin · Scout{% endblock %}
+{% block content %}
+<p><a href="/admin">← Admin</a></p>
+<h1>Activity</h1>
+<form method="get" action="/admin/activity" class="row">
+  <label for="filter-user">Show</label>
+  <select id="filter-user" name="user">
+    <option value="">Everyone</option>
+    {% for u in users %}
+    <option value="{{ u.id }}"{% if selected == u.id %} selected{% endif %}>{{ u.login }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="secondary">Filter</button>
+</form>
+<p class="muted">The latest {{ entries | length }} entries, newest first.</p>
+{% if entries %}
+<div class="table-wrap">
+<table class="log">
+  <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Car</th><th scope="col">What</th><th scope="col">Details</th><th scope="col">Outcome</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td>{{ e.ts | when }}</td>
+      <td>{{ e.login or "—" }}</td>
+      <td>{{ e.car_id or "—" }}</td>
+      <td><code>{{ e.action }}</code></td>
+      <td class="detail">{{ e.detail }}</td>
+      <td class="{{ 'ok' if e.outcome == 'ok' else 'bad' }}">{{ e.outcome }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p>Nothing yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,31 @@
+{# Ready-to-paste setup commands for every client. `token` is the real token or a placeholder. #}
+{% macro install_commands(token, real) %}
+<section class="client" aria-labelledby="client-claude">
+  <h3 id="client-claude">Claude Code</h3>
+  <p>Run this in a terminal:</p>
+  <pre><code>claude mcp add --transport http scout {{ mcp_url }} --header "Authorization: Bearer {{ token }}"</code></pre>
+</section>
+
+<section class="client" aria-labelledby="client-codex">
+  <h3 id="client-codex">OpenAI Codex CLI</h3>
+  <p>Codex reads the token from an environment variable called <code>SCOUT_TOKEN</code>. Add the server once:</p>
+  <pre><code>codex mcp add scout --url {{ mcp_url }} --bearer-token-env-var SCOUT_TOKEN</code></pre>
+  <p>Then set <code>SCOUT_TOKEN</code> wherever you start Codex. On macOS or Linux, add this line to your shell profile (for example <code>~/.zshrc</code> or <code>~/.bashrc</code>):</p>
+  <pre><code>export SCOUT_TOKEN="{{ token }}"</code></pre>
+  <p>On Windows, run this once in PowerShell, then open a new terminal:</p>
+  <pre><code>setx SCOUT_TOKEN "{{ token }}"</code></pre>
+</section>
+
+<section class="client" aria-labelledby="client-grokbot">
+  <h3 id="client-grokbot">Grok Bot</h3>
+  <p>Paste this into a Grok Bot chat:</p>
+  <pre><code>Add a custom MCP server called scout at {{ mcp_url }}/{{ token }}</code></pre>
+  <p>Click <strong>Add it</strong> when Grok asks. Keep the word "custom", or Grok looks in its marketplace instead. Then attach Scout to a chat with <code>@scout</code>.</p>
+  {% if real %}<p class="note">That link contains your token, so keep it private like a password.</p>{% endif %}
+</section>
+
+<section class="client" aria-labelledby="client-grokcli">
+  <h3 id="client-grokcli">grok CLI</h3>
+  <pre><code>grok mcp add --transport http scout {{ mcp_url }} --header "Authorization: Bearer {{ token }}"</code></pre>
+</section>
+{% endmacro %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>Scout</h1>
+  <p class="lead">A small robot car that AI assistants can see through and drive, from anywhere.</p>
+  {% if car %}
+  <p class="car-state">
+    <span class="dot {{ 'on' if online else 'off' }}" aria-hidden="true"></span>
+    {{ car.name }} is <strong>{{ "online" if online else "offline" }}</strong>{% if not online %} right now{% endif %}.
+  </p>
+  {% else %}
+  <p class="car-state"><span class="dot off" aria-hidden="true"></span> No car has been set up yet.</p>
+  {% endif %}
+  {% if not user %}
+  <p><a class="button" href="/login">Sign in with GitHub</a></p>
+  {% else %}
+  <p><a class="button" href="/account">Go to your account</a></p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>How it works</h2>
+  <ul class="steps">
+    <li><strong>Sign in with GitHub.</strong> New accounts wait until an admin approves them.</li>
+    <li><strong>Make a token</strong> on your account page and add Scout to Claude Code, Codex or Grok.</li>
+    <li><strong>Ask your AI</strong> to look around, find something, check a door or follow the cat.</li>
+  </ul>
+  <p>The car has mecanum wheels, so it can drive sideways as well as forwards, and a camera at cat height. Every move is short and stops by itself, and one person drives at a time.</p>
+  <p><a href="/install">How to connect an AI</a></p>
+</section>
+{% endblock %}

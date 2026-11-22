@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}{{ car.name }} · Admin · Scout{% endblock %}
+{% block content %}
+<p><a href="/admin">← Admin</a></p>
+<h1>{{ car.name }} <span class="muted">{{ car.car_id }}</span></h1>
+
+{% if new_key %}
+<section class="new-secret" aria-labelledby="new-key">
+  <h2 id="new-key">The car's key</h2>
+  <p><strong>Copy it now.</strong> Scout keeps only a fingerprint, so this is the only time you'll see it. Any older key for this car has stopped working.</p>
+  <pre class="secret"><code>{{ new_key }}</code></pre>
+  <h3>Put it on the car</h3>
+  <ol>
+    <li>Power the car on, join its setup WiFi network (<code>Scout-Setup-</code> and four letters or digits) and open the setup page that appears.</li>
+    <li>Enter your WiFi, the server address <code>{{ car_socket_url }}</code> and this key, then save.</li>
+    <li>The car restarts, connects and shows up as online here within a few seconds.</li>
+  </ol>
+  <p>To try the server without the car, run the simulator from the <code>server</code> folder:</p>
+  <pre><code>uv run scout-sim --url {{ car_socket_url }} --key {{ new_key }}</code></pre>
+</section>
+{% endif %}
+
+<section aria-labelledby="live">
+  <h2 id="live">Live</h2>
+  {% if summary and summary.online %}
+  <p><span class="dot on" aria-hidden="true"></span> Online since {{ summary.connected_since | when if summary.connected_since else "just now" }}{% if summary.activity %}, busy: <strong>{{ summary.activity }}</strong>{% endif %}.</p>
+  {% else %}
+  <p><span class="dot off" aria-hidden="true"></span> Offline{% if summary and summary.last_seen %}, last seen {{ summary.last_seen | ago }}{% endif %}.</p>
+  {% endif %}
+  <p>Driver: {% if driver %}<strong>{{ driver.login }}</strong> (idle {{ driver_idle }} s){% else %}nobody{% endif %}</p>
+  {% if summary %}
+  <dl class="facts">
+    <dt>Firmware</dt><dd>{{ summary.firmware or "—" }} <span class="muted">(UNO {{ summary.uno_firmware or "—" }}, {{ "answering" if summary.uno_ok else "not answering" }})</span></dd>
+    <dt>Camera</dt><dd>{{ summary.camera or "—" }}{% if summary.max_res %}, up to {{ summary.max_res }}{% endif %}, PSRAM {{ (summary.psram // 1024) if summary.psram else 0 }} KB</dd>
+    <dt>WiFi</dt><dd>{{ summary.ssid or "—" }}{% if summary.rssi is not none %} ({{ summary.rssi }} dBm){% endif %}{% if summary.ip %}, {{ summary.ip }}{% endif %}</dd>
+    <dt>Firmware update</dt><dd>{{ summary.ota_state or "—" }}</dd>
+  </dl>
+  {% if summary.telemetry %}
+  <details>
+    <summary>Latest telemetry</summary>
+    <pre><code>{{ telemetry_json }}</code></pre>
+  </details>
+  {% endif %}
+  {% endif %}
+  <div class="buttons">
+    <form method="post" action="/admin/cars/{{ car.car_id }}/stop" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Stop everything</button></form>
+    <form method="post" action="/admin/cars/{{ car.car_id }}/release" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="secondary">Release the driver</button></form>
+    <form method="post" action="/admin/cars/{{ car.car_id }}/disconnect" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="secondary">Disconnect</button></form>
+  </div>
+</section>
+
+<section aria-labelledby="availability">
+  <h2 id="availability">Who can drive</h2>
+  <form method="post" action="/admin/cars/{{ car.car_id }}/availability" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset>
+      <legend class="visually-hidden">Who can drive</legend>
+      <label class="check"><input type="radio" name="availability" value="admins"{% if car.availability == "admins" %} checked{% endif %}> Admins only</label>
+      <label class="check"><input type="radio" name="availability" value="everyone"{% if car.availability == "everyone" %} checked{% endif %}> Everyone who's approved</label>
+    </fieldset>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<section aria-labelledby="settings">
+  <h2 id="settings">Settings</h2>
+  <form method="post" action="/admin/cars/{{ car.car_id }}/settings" class="stack grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="s_name">Name</label>
+    <input id="s_name" name="name" value="{{ car.settings.name }}" maxlength="40" required>
+    <label for="s_obst">Obstacle stop distance (cm, 5-100)</label>
+    <input id="s_obst" name="obst_cm" type="number" min="5" max="100" value="{{ car.settings.obst_cm }}" required>
+    <label for="s_pwm">Lowest motor PWM that still turns the wheels (0-255)</label>
+    <input id="s_pwm" name="min_pwm" type="number" min="0" max="255" value="{{ car.settings.min_pwm }}" required>
+    <label for="s_link">Link watchdog (ms, 300-5000)</label>
+    <input id="s_link" name="link_ms" type="number" min="300" max="5000" value="{{ car.settings.link_ms }}" required>
+    <label class="check"><input type="checkbox" name="vflip"{% if car.settings.vflip %} checked{% endif %}> Flip the picture vertically</label>
+    <label class="check"><input type="checkbox" name="hmirror"{% if car.settings.hmirror %} checked{% endif %}> Mirror the picture</label>
+    <h3>Calibration</h3>
+    <p class="muted">Rough speeds at 100 %, measured on the real floor. They turn "turn 90 degrees" into a duration.</p>
+    <label for="s_turn">Turning (degrees per second)</label>
+    <input id="s_turn" name="turn_deg_per_s" type="number" step="any" min="1" max="2000" value="{{ car.settings.turn_deg_per_s }}" required>
+    <label for="s_fwd">Forward (cm per second)</label>
+    <input id="s_fwd" name="forward_cm_per_s" type="number" step="any" min="1" max="500" value="{{ car.settings.forward_cm_per_s }}" required>
+    <label for="s_strafe">Sideways (cm per second)</label>
+    <input id="s_strafe" name="strafe_cm_per_s" type="number" step="any" min="1" max="500" value="{{ car.settings.strafe_cm_per_s }}" required>
+    <button type="submit">Save and send to the car</button>
+  </form>
+</section>
+
+<section aria-labelledby="firmware">
+  <h2 id="firmware">Firmware update</h2>
+  <p class="muted">The car downloads the file itself, checks its size and SHA-256, installs it and restarts. It refuses while moving.</p>
+  <form method="post" action="/admin/cars/{{ car.car_id }}/firmware" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="fw_url">Firmware URL (https)</label>
+    <input id="fw_url" name="url" type="url" pattern="https://.*" required>
+    <label for="fw_sha">SHA-256</label>
+    <input id="fw_sha" name="sha256" pattern="[0-9a-fA-F]{64}" maxlength="64" required>
+    <label for="fw_size">Size (bytes)</label>
+    <input id="fw_size" name="size" type="number" min="1" required>
+    <button type="submit">Start the update</button>
+  </form>
+</section>
+
+<section aria-labelledby="wheel-test">
+  <h2 id="wheel-test">Wheel test</h2>
+  <p class="muted">Bench diagnostics: drives the shift register and the two PWM pins directly, with no obstacle check. Lift the wheels off the ground first.</p>
+  <form method="post" action="/admin/cars/{{ car.car_id }}/wheel-test" class="stack grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="wt_bits">Bits (0-255)</label>
+    <input id="wt_bits" name="bits" type="number" min="0" max="255" value="163" required>
+    <label for="wt_pwm5">PWM on D5 (0-255)</label>
+    <input id="wt_pwm5" name="pwm5" type="number" min="0" max="255" value="120" required>
+    <label for="wt_pwm6">PWM on D6 (0-255)</label>
+    <input id="wt_pwm6" name="pwm6" type="number" min="0" max="255" value="120" required>
+    <label for="wt_ms">Duration (ms, 1-2000)</label>
+    <input id="wt_ms" name="ms" type="number" min="1" max="2000" value="500" required>
+    <button type="submit" class="secondary">Run the test</button>
+  </form>
+</section>
+
+<section aria-labelledby="key">
+  <h2 id="key">Key</h2>
+  <p>The current key starts with <code>{{ car.key_prefix }}…</code>. Making a new key disconnects the car until it has the new one.</p>
+  <form method="post" action="/admin/cars/{{ car.car_id }}/rotate-key" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="danger">Make a new key</button>
+  </form>
+</section>
+{% endblock %}
