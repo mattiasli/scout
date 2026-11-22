@@ -43,9 +43,10 @@ class RobotConfig:
     preview_width: int = 480
 
     # How the UNO build drives its two PWM pins (SCOUT_PWM_SPLIT in the firmware), for the
-    # motion estimates: "shared" is the default build, "split" one pin per side, "ideal"
-    # every wheel at its own speed. Pure moves are estimated the same under all three.
-    pwm_layout: PwmLayout = "shared"
+    # motion estimates: "split" one pin per side (the default build, as the AD176 is
+    # wired), "shared" both pins at one duty, "ideal" every wheel at its own speed. Pure
+    # moves are estimated the same under all three.
+    pwm_layout: PwmLayout = "split"
 
     # Look-around.
     look_around_speed: int = 50

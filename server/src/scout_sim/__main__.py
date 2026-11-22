@@ -44,10 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--door-open", action="store_true", help="the door starts open")
     p.add_argument(
         "--pwm",
-        default="shared",
-        choices=["shared", "split", "ideal"],
-        help="how the motor board drives its two PWM pins: shared (the default firmware build), "
-        "split (one pin per side) or ideal (every wheel at its own speed); default: %(default)s",
+        default="split",
+        choices=["split", "shared", "ideal"],
+        help="how the motor board drives its two PWM pins: split (one pin per side, the default "
+        "firmware build), shared (both pins at one duty) or ideal (every wheel at its own speed); "
+        "default: %(default)s",
     )
     p.add_argument(
         "--render", metavar="FILE", help="write one camera frame from the start pose as a JPEG and exit"

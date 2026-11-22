@@ -181,7 +181,8 @@ TEST(a_wheel_on_no_pwm_pin_coasts) {
   CHECK_EQ(static_cast<int>(out.pwm6), 0);
 }
 
-TEST(default_build_uses_shared_pwm) {
-  CHECK_EQ(static_cast<int>(scout::kPwmLayout.pwm5Wheels), static_cast<int>(scout::kWheelsAll));
-  CHECK_EQ(static_cast<int>(scout::kPwmLayout.pwm6Wheels), static_cast<int>(scout::kWheelsAll));
+TEST(default_build_matches_the_measured_wiring) {
+  // D5 drives the right wheels, D6 the left ones (measured on the AD176).
+  CHECK_EQ(static_cast<int>(scout::kPwmLayout.pwm5Wheels), static_cast<int>(scout::kWheelsRight));
+  CHECK_EQ(static_cast<int>(scout::kPwmLayout.pwm6Wheels), static_cast<int>(scout::kWheelsLeft));
 }

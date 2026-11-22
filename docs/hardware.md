@@ -28,8 +28,8 @@ flashing either board**.
 | D4 | 74HC595 latch |
 | D7 | 74HC595 output enable, active low. A 10 kΩ pull-up keeps the motors off until the firmware drives it low |
 | D8 | 74HC595 data |
-| D5, D6 | Motor speed (PWM). Which wheels each pin controls is *unverified* |
-| D9 | Camera tilt servo (KS-9GMS, SG90 class). 90° is level |
+| D5, D6 | Motor speed (PWM): D5 the two right wheels, D6 the two left ones (measured) |
+| D9 | Camera tilt servo (KS-9GMS, SG90 class). Level is a servo angle of 81°; at 90° the camera points about 9° up |
 | D12, D13 | Ultrasonic sensor trigger and echo (forward-facing) |
 | A0, A1, A2 | Three downward-facing line sensors (which side is which is *unverified*) |
 | D10, D11 | Free |

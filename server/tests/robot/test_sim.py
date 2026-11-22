@@ -58,7 +58,7 @@ UART_CHECK_VALUES = {
     "counter-clockwise": ((0, 0, -1), 83),
     "stop": ((0, 0, 0), 0),
 }
-SHARED, SPLIT, IDEAL = Physics(), Physics(pwm_model="split"), Physics(pwm_model="ideal")
+SHARED, SPLIT, IDEAL = Physics(pwm_model="shared"), Physics(), Physics(pwm_model="ideal")
 
 
 @pytest.mark.parametrize(("vector", "bits"), UART_CHECK_VALUES.values(), ids=list(UART_CHECK_VALUES))
@@ -116,8 +116,8 @@ def test_driven_wheels_run_at_their_pins_duty() -> None:
     assert drive_wheels(60, 0, 0, SHARED) == (60, 60, 60, 60)  # pure moves are exact
     assert drive_wheels(50, 0, 20, SHARED) == (70, 70, 70, 70)  # the turn share is lost
     assert drive_wheels(50, 0, 20, SPLIT) == (70, 70, 30, 30)  # each side its own duty
-    left_on_d6 = Physics(pwm_model="split", pwm5_left=False)
-    assert drive_wheels(50, 0, 20, left_on_d6) == (70, 70, 30, 30)  # same wheels, other pins
+    left_on_d5 = Physics(pwm_model="split", pwm5_left=True)
+    assert drive_wheels(50, 0, 20, left_on_d5) == (70, 70, 30, 30)  # same wheels, other pins
     # A strafe with a little rotation: all four at the shared duty, so it only strafes.
     assert body_velocity(drive_wheels(0, 38, 4, SHARED)) == pytest.approx((0, 42, 0))
     assert body_velocity(drive_wheels(0, 38, 4, IDEAL)) == pytest.approx((0, 38, 4))
@@ -136,8 +136,8 @@ def test_mixing_inverts_and_raw_test_bits() -> None:
     for v in ((60, 0, 0), (0, -40, 0), (0, 0, 30), (20, 15, -10)):
         assert body_velocity(mix(*v)) == pytest.approx(v)
     assert bits_wheels(163, 153, 153) == pytest.approx((60, 60, 60, 60))
-    assert bits_wheels(106, 255, 0) == pytest.approx((-100, 100, 0, 0))  # D6 at 0: right side still
-    assert bits_wheels(106, 255, 0, pwm5_left=False) == pytest.approx((0, 0, 100, -100))  # D5 on the right
+    assert bits_wheels(106, 255, 0) == pytest.approx((0, 0, 100, -100))  # D6 at 0: left side still
+    assert bits_wheels(106, 255, 0, pwm5_left=True) == pytest.approx((-100, 100, 0, 0))  # D5 on the left
 
 
 def test_car_moves_turns_and_is_blocked_by_walls() -> None:

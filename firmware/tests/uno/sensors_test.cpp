@@ -100,10 +100,11 @@ TEST(tilt_is_clamped_to_the_safe_range) {
 }
 
 TEST(tilt_maps_to_servo_pulse) {
-  // Servo angle = 90 + tilt; 544..2400 us for 0..180 degrees, like the Servo library.
-  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(0)), 1472);
-  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(-40)), 544 + (50 * 1856 + 90) / 180);
-  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(40)), 544 + (130 * 1856 + 90) / 180);
+  // Servo angle = kServoLevelAngle + tilt; 544..2400 us for 0..180 degrees, like the Servo library.
+  // Level is servo angle 81 on the AD176 (90 points the camera about 9 degrees up).
+  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(0)), 1379);
+  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(-40)), 544 + (41 * 1856 + 90) / 180);
+  CHECK_EQ(static_cast<int>(scout::tiltPulseUs(40)), 544 + (121 * 1856 + 90) / 180);
   CHECK(scout::tiltPulseUs(10) > scout::tiltPulseUs(0));  // up = larger angle
   CHECK(scout::tiltPulseUs(-10) < scout::tiltPulseUs(0));
   CHECK_EQ(scout::tiltPulseUs(100), scout::tiltPulseUs(40));  // clamped here too

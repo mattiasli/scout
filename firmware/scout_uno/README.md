@@ -62,19 +62,22 @@ These hold whatever the host sends:
 
 ## PWM modes
 
-The shield has two speed pins for four wheels, and which wheels each pin drives hasn't
-been measured yet. `src/core/config.h` selects the mode at compile time:
+The shield has two speed pins for four wheels. On the AD176, D5 drives the two right
+wheels and D6 the two left ones (measured with `bench.py pwmmap`). `src/core/config.h`
+selects the mode at compile time:
 
-- `SCOUT_PWM_SPLIT 0` (the default): **shared**. Both pins carry the duty of the fastest
-  wheel. A wheel below 25 % of the fastest is not driven (both of its lines low). That's
-  exact for the pure moves in the spec and approximate for blended ones. Because the
-  speed pin also enables that wheel's driver, a wheel that isn't driven during a move is
-  probably braked rather than left to spin freely (L293D: both inputs low with the enable
-  high shorts the motor). After `STOP` both PWMs are 0, so all wheels spin freely.
-- `SCOUT_PWM_SPLIT 1`: **per side**. Each pin drives one side, at the duty of that
-  side's fastest wheel; `SCOUT_PWM5_LEFT` says whether D5 is the left side (1) or the
-  right (0). The 25 % rule then applies within each side. For other groupings, set
-  `kPwmLayout` in `src/core/mecanum.h`.
+- `SCOUT_PWM_SPLIT 1` with `SCOUT_PWM5_LEFT 0` (the default): **per side**. Each pin
+  drives one side, at the duty of that side's fastest wheel. A wheel below 25 % of the
+  fastest on its side is not driven (both of its lines low). That's exact for the pure
+  moves in the spec and for any mix of driving and turning; mixes with strafing are
+  approximate. Because the speed pin also enables that wheel's driver, a wheel that isn't
+  driven during a move is braked rather than left to spin freely (L293D: both inputs low
+  with the enable high shorts the motor). After `STOP` both PWMs are 0, so all wheels
+  spin freely.
+- `SCOUT_PWM5_LEFT 1`: the same for a shield where D5 drives the left side.
+- `SCOUT_PWM_SPLIT 0`: **shared**. Both pins carry the duty of the fastest wheel, and the
+  25 % rule applies across all four. For other groupings, set `kPwmLayout` in
+  `src/core/mecanum.h`.
 
 Speed percent to PWM: 0 stays 0, and 1..100 maps linearly onto `MINPWM`..255.
 
@@ -175,18 +178,20 @@ a stand with its wheels off the ground:
 
 ## Still to measure on the car
 
-- [ ] `wheels`: the bit map in `protocol/uart.md` matches the real motor wiring.
-- [ ] `pwmmap`: which wheels D5 and D6 drive. Switch to per-side PWM if each is one side.
+- [x] `wheels`: the bit map in `protocol/uart.md` matches the real motor wiring.
+- [x] `pwmmap`: D5 drives the right wheels and D6 the left ones, so the default build
+      uses per-side PWM.
 - [ ] `MINPWM`: the lowest PWM that still turns every wheel on the floor (default 90).
-- [ ] Tilt: the real mechanical limits of the camera mount. The firmware allows -40..+40
-      degrees; widen `kTiltMinDeg`/`kTiltMaxDeg` only after checking. Check also that
-      positive really tilts up and that 0 is level.
+- [x] Tilt: positive tilts up. Servo angle 90 pointed the camera about 9 degrees up, so
+      level is now 81 (`kServoLevelAngle`). The whole -40..+40 range moves freely
+      without touching the mount; it could be widened after another check.
 - [ ] Line sensors: which of A0/A1/A2 is left, centre and right (the vendor sketches
       disagree), and what readings mean "line".
 - [ ] Ultrasonic: readings against a tape measure, and what the module does with no
       echo (a long pulse, which is discarded, or no pulse, which gives `-1`).
-- [ ] `obstacle`: the forward move stops for a hand, and the default 15 cm suits the car's
-      stopping distance at full speed.
+- [ ] `obstacle`: a forward move doesn't start with a hand 8-9 cm in front (checked on
+      the bench); still to see: a running move stops, and the default 15 cm suits the
+      car's stopping distance at full speed on the floor.
 - [ ] Motors stay still while the UNO is in reset or being flashed (all UNO pins float
       then; the shield's pull-up on OE# should keep the drivers off).
 - [ ] Reset flags: what `BOOT` reports after power-on and after a watchdog reset with

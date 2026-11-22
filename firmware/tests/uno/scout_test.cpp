@@ -65,7 +65,7 @@ TEST(nothing_touches_the_hardware_before_begin) {
 TEST(boot_disables_outputs_then_latches_zeros_then_enables_then_sends_boot) {
   Rig r(false);
   r.car.begin(0, 0);
-  CHECK_EQ(joined(r.hw.log), "enable 0 | pwm 0 0 | sr 0 | enable 1 | servo 1472 | tx BOOT");
+  CHECK_EQ(joined(r.hw.log), "enable 0 | pwm 0 0 | sr 0 | enable 1 | servo 1379 | tx BOOT");
   CHECK_EQ(static_cast<int>(r.hw.bits), 0);
   CHECK(r.hw.driverEnabled);
   CHECK_SENT(r, "BOOT,0,0.1.0,0");
@@ -629,7 +629,7 @@ TEST(tilt_is_clamped_and_acknowledged_with_the_applied_angle) {
   r.rx("TILT,4,2147483647");
   r.rx("TILT,5,0");
   CHECK_SENT(r, "ACK,2,40", "ACK,3,-40", "ACK,4,40", "ACK,5,0");
-  CHECK_EQ(r.hw.servoUs, 1472);
+  CHECK_EQ(r.hw.servoUs, 1379);
   CHECK(!motorsDriven(r.hw));
 }
 

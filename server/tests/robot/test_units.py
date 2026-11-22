@@ -72,10 +72,10 @@ def test_mixing_follows_the_uno() -> None:
     assert wheel_mix(71, 71, 0) == (100, 0, 0, 100)  # a full-speed diagonal: 142 % scaled down
     assert wheel_mix(-100, 100, -100) == (-33, -100, -33, 33)  # truncated toward zero
     assert wheel_output(42, 42, 0) == (84, 0, 0, 84)  # diagonals drive two wheels
-    assert wheel_output(40, 0, 30) == (70, 70, 0, 0)  # 10 < 70 / 4: the right side coasts
-    assert wheel_output(25, 0, 15) == (40, 40, 40, 40)  # exactly a quarter is still driven
-    assert wheel_output(50, 0, 20) == (70, 70, 70, 70)  # the shared duty evens them out
-    assert wheel_output(50, 0, 20, "split") == (70, 70, 30, 30)
+    assert wheel_output(40, 0, 30, "shared") == (70, 70, 0, 0)  # 10 < 70 / 4: the right side coasts
+    assert wheel_output(25, 0, 15, "shared") == (40, 40, 40, 40)  # exactly a quarter is still driven
+    assert wheel_output(50, 0, 20, "shared") == (70, 70, 70, 70)  # the shared duty evens them out
+    assert wheel_output(50, 0, 20) == (70, 70, 30, 30)  # one pin per side: each side its own speed
     assert wheel_output(50, 0, 20, "ideal") == (70, 70, 30, 30)
     assert wheel_output(60, 40, 0, "split") == (100, 0, 0, 100)  # 25 % rule within each side
     assert body_velocity(wheel_output(20, 15, -10, "ideal")) == pytest.approx((20, 15, -10))
@@ -91,12 +91,13 @@ def test_estimates_from_calibration() -> None:
     assert e.distance_cm == pytest.approx(math.hypot(12.6, 8.4))
     assert estimate(0, 0, 50, 1000, s).clockwise_deg == pytest.approx(90)
     assert estimate(100, 0, 100, 1000, s).forward_cm == pytest.approx(15)  # scaled to fit
-    # A blend is estimated the way the stock shield drives it: with the shared duty all
-    # four wheels run at 70 %, so it goes straight; per-wheel PWM would also turn.
-    e = estimate(50, 0, 20, 1000, s)
+    # A blend is estimated the way the shield drives it. With the shared duty all four
+    # wheels run at 70 %, so it goes straight; one pin per side keeps the turn.
+    e = estimate(50, 0, 20, 1000, s, layout="shared")
     assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((21, 0, 0))
-    e = estimate(50, 0, 20, 1000, s, layout="ideal")
+    e = estimate(50, 0, 20, 1000, s)
     assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((15, 0, 36))
+    assert estimate(50, 0, 20, 1000, s, layout="ideal") == e
     # A pure move is the same whatever the layout.
     for layout in ("shared", "split", "ideal"):
         assert estimate(42, -42, 0, 500, s, layout=layout) == estimate(42, -42, 0, 500, s)  # type: ignore[arg-type]

@@ -76,23 +76,25 @@ the car.
 The stock shield has only two PWM pins for four wheels. The simulator drives them the
 way the firmware does, chosen with `--pwm`:
 
-- `shared` (the default firmware build, `SCOUT_PWM_SPLIT 0`): both pins carry the duty
-  of the fastest wheel, so every driven wheel turns at that speed.
-- `split` (`SCOUT_PWM_SPLIT 1`): each pin drives one side at the speed of that side's
-  fastest wheel.
+- `split` (the default, as the AD176 is wired; firmware `SCOUT_PWM_SPLIT 1`): each pin
+  drives one side at the speed of that side's fastest wheel.
+- `shared` (`SCOUT_PWM_SPLIT 0`): both pins carry the duty of the fastest wheel, so
+  every driven wheel turns at that speed.
 - `ideal`: every wheel at its own mixed speed, as if each had its own pin. The real
   shield can't do this.
 
-With `shared` and `split`, a wheel below a quarter of the fastest wheel on its pin
+With `split` and `shared`, a wheel below a quarter of the fastest wheel on its pin
 coasts (the firmware's `kCoastDivisor`); exactly a quarter is still driven. Pure moves
-(the eight directions and turning on the spot) come out exactly. Blended moves lose
-their small part. For example, `vx 50, wz 20` gives wheels of 70 and 30 %: the shared
-duty runs all four at 70 %, so the car goes straight. `vx 40, wz 30` gives 70 and 10 %:
-the slow side coasts, so the car pivots. The simulator takes the percentage as the
-wheel speed; the firmware's `min_pwm` offset is there to make that roughly true.
+(the eight directions and turning on the spot) come out exactly. With `split`, so does
+any mix of driving and turning: `vx 50, wz 20` gives the left wheels 70 % and the right
+ones 30 %, and the car curves. Mixes with strafing lose their small part, because the
+two wheels on a side then want different speeds. With `shared` the same `vx 50, wz 20`
+runs all four at 70 %, so the car goes straight, and `vx 40, wz 30` (70 and 10 %)
+leaves the slow side coasting, so the car pivots. The simulator takes the percentage as
+the wheel speed; the firmware's `min_pwm` offset is there to make that roughly true.
 
-`TEST` uses the raw bits and duties and assumes D5 drives the left wheels and D6 the
-right ones. The real mapping is still unmeasured.
+`TEST` uses the raw bits and duties, with D5 driving the right wheels and D6 the left
+ones as on the real car.
 
 ### Motor board rules
 
