@@ -456,12 +456,13 @@ def _lookalike(
     choice: Choice,
     typical_score: float | None,
     *,
-    score_drop: float,
+    min_score: float,
     margin: float,
 ) -> int | None:
     """Another one in view that could be taken for the target, if any. It must look about as
     alike as the target does (at least LEARN_MATCH, and no more than ``margin`` less), the
-    detector must be about as sure of it, and its box mustn't be mostly inside the target's
+    detector must be at least ``min_score`` times as sure of it as it usually is of the
+    target, and its box mustn't be mostly inside the target's
     (the detector sometimes boxes a person's legs as well). Judged only while the target is
     in view, to compare with."""
     if choice.index is None or choice.match is None:
@@ -472,11 +473,26 @@ def _lookalike(
         if (
             i != choice.index
             and m >= max(LEARN_MATCH, choice.match - margin)
-            and (typical_score is None or other.score >= score_drop * typical_score)
+            and (typical_score is None or other.score >= min_score * typical_score)
             and overlap(other, target) <= SAME_ONE
         ):
             return i
     return None
+
+
+def _in_view(candidates: Sequence[Detection], choice: Choice) -> str:
+    """What follow saw in a frame, for the log: each box with its detector score and how
+    alike it looks, the one it took for the target marked with a star."""
+    seen = []
+    for i, d in enumerate(candidates):
+        m = choice.matches[i] if i < len(choice.matches) else None
+        seen.append(
+            f"{'*' if i == choice.index else ''}{d.label} {d.score:.2f}"
+            + (f" match {m:.2f}" if m is not None else "")
+            + f" box {d.x0:.2f},{d.y0:.2f},{d.x1:.2f},{d.y1:.2f}"
+            + (" cut off" if cut_off(d) else "")
+        )
+    return "; ".join(seen) or "nothing"
 
 
 def _wake(car: _Car, what: str) -> None:
@@ -2260,7 +2276,7 @@ class Robot:
                         candidates,
                         choice,
                         typical_score,
-                        score_drop=cfg.follow_score_drop,
+                        min_score=cfg.follow_lookalike_score,
                         margin=cfg.follow_lookalike_margin,
                     )
                     if other is not None:
@@ -2296,6 +2312,12 @@ class Robot:
                             confirm_frames=cfg.follow_confirm_frames,
                         )
                         if checking is not None and checking.why != was:
+                            log.info(
+                                "follow: holding back, as %s. Usual detector score %s. In view: %s",
+                                checking.why,
+                                "unknown" if typical_score is None else f"{typical_score:.2f}",
+                                _in_view(candidates, choice),
+                            )
                             _wake(car, f"follow is holding back from driving, as {checking.why}")
                         elif checking is None and choice.unsure and time.monotonic() - unsure_woke > 10:
                             unsure_woke = time.monotonic()

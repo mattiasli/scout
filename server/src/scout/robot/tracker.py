@@ -37,7 +37,12 @@ STRONG_SATURATION = 0.5
 PART_BINS = HUE_BINS * 2 + GREY_BINS
 PARTS = 3  # top half, bottom half, whole box
 MAX_PART_PIXELS = 64 * 64  # bigger crops are shrunk first: the histogram doesn't need more
-EDGE = 0.02  # a box this close to an edge of the picture is cut off there
+# A box this close to the left, right or top of the picture is cut off there. The
+# detector's box often stops a few pixels short of the edge of what it sees.
+EDGE = 0.05
+# ... and this close to the bottom. The camera sits low and tilts up, so the feet of
+# someone in full view often come within 5% of the bottom.
+EDGE_BOTTOM = 0.02
 SAME_ONE = 0.5  # a box this much inside another (of its area) is taken as more of the same
 
 
@@ -161,22 +166,30 @@ def size_change(candidate: Detection, last: Detection) -> float:
     across = _change(
         candidate.width,
         last.width,
-        new_cut=candidate.x0 <= EDGE or candidate.x1 >= 1 - EDGE,
-        old_cut=last.x0 <= EDGE or last.x1 >= 1 - EDGE,
+        new_cut=_cut_across(candidate),
+        old_cut=_cut_across(last),
     )
     up = _change(
         candidate.height,
         last.height,
-        new_cut=candidate.y0 <= EDGE or candidate.y1 >= 1 - EDGE,
-        old_cut=last.y0 <= EDGE or last.y1 >= 1 - EDGE,
+        new_cut=_cut_up(candidate),
+        old_cut=_cut_up(last),
     )
     return (across + up) / 2
+
+
+def _cut_across(det: Detection) -> bool:
+    return det.x0 <= EDGE or det.x1 >= 1 - EDGE
+
+
+def _cut_up(det: Detection) -> bool:
+    return det.y0 <= EDGE or det.y1 >= 1 - EDGE_BOTTOM
 
 
 def cut_off(det: Detection) -> bool:
     """Whether ``det``'s box reaches an edge of the picture, so part of it is out of view.
     The detector is less sure of a person it sees only part of, close up."""
-    return det.x0 <= EDGE or det.y0 <= EDGE or det.x1 >= 1 - EDGE or det.y1 >= 1 - EDGE
+    return _cut_across(det) or _cut_up(det)
 
 
 def overlap(a: Detection, b: Detection) -> float:
