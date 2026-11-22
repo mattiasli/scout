@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AVR_CORE: "arduino:avr@1.8.8"
+  ESP32_CORE: "esp32:esp32@3.3.13"
+  ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  ESP32_FQBN: "esp32:esp32:esp32cam:PartitionScheme=min_spiffs"
+
+jobs:
+  firmware-tests:
+    name: Firmware unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: |
+          cmake -S firmware/tests -B build/firmware-tests
+          cmake --build build/firmware-tests --parallel
+      - name: Test
+        run: ctest --test-dir build/firmware-tests --output-on-failure
+
+  uno-build:
+    name: UNO firmware build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install the AVR core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install "$AVR_CORE"
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn arduino:avr:uno --libraries firmware/libraries --warnings all \
+            --build-path build/uno --output-dir dist/uno firmware/scout_uno 2>&1 | tee build-uno.log
+          # Our own code must compile without warnings.
+          if grep -E "(firmware/scout_uno|ScoutLink)[^:]*:[0-9]+:[0-9]+: warning:" build-uno.log; then exit 1; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: uno-firmware
+          path: dist/uno/*.hex
+
+  esp32-build:
+    name: ESP32-CAM firmware build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/cache@v6
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ env.ESP32_CORE }}
+      - name: Install the ESP32 core
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install "$ESP32_CORE" --additional-urls "$ESP32_INDEX"
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn "$ESP32_FQBN" --libraries firmware/libraries --warnings all \
+            --build-path build/esp32cam --output-dir dist/esp32cam firmware/scout_esp32cam 2>&1 | tee build-esp32.log
+          if grep -E "(firmware/scout_esp32cam|ScoutLink)[^:]*:[0-9]+:[0-9]+: warning:" build-esp32.log; then exit 1; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: esp32cam-firmware
+          path: dist/esp32cam/*.bin
+
+  server:
+    name: Server checks (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install
+        run: uv sync --frozen --python ${{ matrix.python }}
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Test
+        run: uv run pytest --cov=scout --cov=scout_sim --cov-report=term-missing
+
+  server-image:
+    name: Server image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: server
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  tools:
+    name: Tools and protocol vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: Test vectors are up to date
+        run: |
+          python3 tools/make_uart_vectors.py
+          git diff --exit-code protocol/uart_vectors.txt
+      - name: Lint
+        run: uvx ruff check tools
+      - name: Test
+        run: uv run --no-project --python 3.12 --with pytest --with pyserial python -m pytest tools/tests
