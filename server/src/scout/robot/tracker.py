@@ -5,8 +5,10 @@ what the one it follows looks like, as colour histograms of the top and bottom h
 its box (for a person, roughly their top and their trousers) and of the whole box, which
 changes less when the picture cuts them off as the car comes closer. Each frame it
 takes the candidate that looks most like it, preferring the one nearest where it should
-be after the car's last turn. A candidate that doesn't look like it is never taken, so
-follow doesn't switch to someone else without saying so. Two people dressed alike can
+be after the car's last turn and nearest the size it was. A candidate that doesn't look
+like it is never taken, and nor is one far bigger or smaller than it was moments ago (in
+a home, a dark chair or a coat on a hook can be taken for a person in dark clothes), so
+follow doesn't switch to something else without saying so. Two people dressed alike can
 still fool it; that is what ``follow_view`` is for, where the AI watching can check and
 pick again.
 
@@ -35,6 +37,7 @@ STRONG_SATURATION = 0.5
 PART_BINS = HUE_BINS * 2 + GREY_BINS
 PARTS = 3  # top half, bottom half, whole box
 MAX_PART_PIXELS = 64 * 64  # bigger crops are shrunk first: the histogram doesn't need more
+EDGE = 0.02  # a box this close to an edge of the picture is cut off there
 
 
 def open_picture(jpeg: bytes) -> Image.Image:
@@ -141,17 +144,51 @@ class Appearance:
         self.recent = (1 - rate) * self.recent + rate * description
 
 
+def _change(new: float, old: float, *, new_cut: bool, old_cut: bool) -> float:
+    change = math.log(max(new, 1e-3) / max(old, 1e-3))
+    if (change < 0 and new_cut) or (change > 0 and old_cut):
+        return 0.0  # the cut-off could explain it
+    return change
+
+
+def size_change(candidate: Detection, last: Detection) -> float:
+    """How much bigger ``candidate``'s box is than ``last``'s, as the log of the ratio
+    (negative when smaller), averaged over width and height: a cat turning from side-on
+    to face the car gets narrower but no shorter. A box cut off at an edge of the picture
+    is at least as big as it looks that way, so a change the cut-off could explain counts
+    as none: a person the camera cuts off at the knees is still as big as they were."""
+    across = _change(
+        candidate.width,
+        last.width,
+        new_cut=candidate.x0 <= EDGE or candidate.x1 >= 1 - EDGE,
+        old_cut=last.x0 <= EDGE or last.x1 >= 1 - EDGE,
+    )
+    up = _change(
+        candidate.height,
+        last.height,
+        new_cut=candidate.y0 <= EDGE or candidate.y1 >= 1 - EDGE,
+        old_cut=last.y0 <= EDGE or last.y1 >= 1 - EDGE,
+    )
+    return (across + up) / 2
+
+
+def _times(change: float) -> str:
+    return f"{math.exp(abs(change)):.1f}× {'bigger' if change > 0 else 'smaller'}"
+
+
 @dataclass(frozen=True)
 class Choice:
     """Which candidate is the target (``index``, or None), how well it matched, whether
     another one came close, and why, for status. ``matches`` has every candidate's match,
-    empty when there was no appearance to match against."""
+    empty when there was no appearance to match against; ``notes`` says, for each, why it
+    wasn't taken despite looking alike (None for the rest)."""
 
     index: int | None
     match: float | None
     unsure: bool
     why: str
     matches: tuple[float, ...] = ()
+    notes: tuple[str | None, ...] = ()
 
 
 def choose(
@@ -161,15 +198,20 @@ def choose(
     expected: tuple[float, float] | None,
     *,
     min_match: float,
+    last: Detection | None = None,
+    max_size_change: float = math.inf,
     position_weight: float = 0.5,
+    size_weight: float = 0.3,
     margin: float = 0.08,
 ) -> Choice:
     """The candidate that is the target.
 
     Without an appearance yet (nothing picked), the biggest. Otherwise the best of those
-    that match at least ``min_match``, scored by match less ``position_weight`` times its
-    distance from ``expected`` (in picture widths). ``unsure`` when the runner-up scores
-    within ``margin``.
+    that match at least ``min_match`` and are at most ``max_size_change`` times bigger or
+    smaller than ``last`` (the latest sighting), scored by match less ``position_weight``
+    times its distance from ``expected`` (in picture widths) and less ``size_weight``
+    times its size change (``size_change``). ``unsure`` when the runner-up scores within
+    ``margin``.
     """
     if not candidates:
         return Choice(None, None, False, "none in view")
@@ -177,22 +219,39 @@ def choose(
         index = max(range(len(candidates)), key=lambda i: candidates[i].width * candidates[i].height)
         return Choice(index, None, False, "the biggest in view")
     matches = [appearance.match(d) for d in descriptions]
+    notes: list[str | None] = [None] * len(candidates)
+    limit = math.log(max_size_change)
     scored: list[tuple[float, int]] = []
     for i, (det, m) in enumerate(zip(candidates, matches, strict=True)):
         if m < min_match:
             continue
         score = m
+        if last is not None:
+            change = size_change(det, last)
+            if abs(change) > limit:
+                notes[i] = (
+                    f"looks alike but is {_times(change)} than the target was, too big a change to be it"
+                )
+                continue
+            score -= size_weight * abs(change)
         if expected is not None:
             score -= position_weight * math.hypot(det.cx - expected[0], det.cy - expected[1])
         scored.append((score, i))
     if not scored:
-        best = max(matches)
-        why = f"none of the {len(candidates)} in view looks like it (best match {best:.2f})"
-        return Choice(None, best, False, why, tuple(matches))
+        best = max(range(len(candidates)), key=lambda i: matches[i])
+        if notes[best] is not None:
+            change = size_change(candidates[best], last) if last is not None else 0.0
+            why = (
+                f"the one in view that looks most like it (match {matches[best]:.2f}) is "
+                f"{_times(change)} than the target was, too big a change to be it"
+            )
+        else:
+            why = f"none of the {len(candidates)} in view looks like it (best match {matches[best]:.2f})"
+        return Choice(None, matches[best], False, why, tuple(matches), tuple(notes))
     scored.sort(reverse=True)
     index = scored[0][1]
     unsure = len(scored) > 1 and scored[0][0] - scored[1][0] < margin
     why = f"match {matches[index]:.2f}"
     if unsure:
         why += f", but another one in view looks almost as alike ({matches[scored[1][1]]:.2f})"
-    return Choice(index, matches[index], unsure, why, tuple(matches))
+    return Choice(index, matches[index], unsure, why, tuple(matches), tuple(notes))

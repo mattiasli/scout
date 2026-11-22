@@ -56,6 +56,7 @@ from scout.robot.follow import (
     bearing_deg,
     exit_side,
     expected_position,
+    looks_far,
     start_tilt,
 )
 from scout.robot.follow import plan as follow_plan
@@ -324,6 +325,7 @@ class _FollowView:
     frame: bytes
     candidates: list[Detection]
     matches: list[float | None]
+    notes: list[str | None]  # why a look-alike wasn't taken
     chosen: int | None
     tilt: int
     real_tilt: float
@@ -336,6 +338,7 @@ class _FollowStart:
     appearance: Appearance | None
     tilt: int | None  # the tilt setting the pick was seen at
     fresh: bool  # picked moments ago, so expect it where it was
+    seen: float | None  # monotonic time of the picture it was picked from
 
 
 def _box(d: Detection) -> tuple[float, float, float, float]:
@@ -375,6 +378,11 @@ def _appearance_of(frame: bytes, det: Detection) -> tuple[Appearance, bytes]:
     return Appearance.of(describe(open_picture(frame), det)), crop(frame, _box(det))
 
 
+def _monotonic(wall: float) -> float:
+    """The monotonic time of a moment ``wall`` (a ``time.time()``) in the past."""
+    return time.monotonic() - max(0.0, time.time() - wall)
+
+
 def _render_view(view: _FollowView) -> tuple[bytes, list[dict[str, Any]], list[Detection]]:
     """follow_view's picture (the target in green, the others numbered in yellow), its
     listing, and the detections in number order."""
@@ -390,17 +398,18 @@ def _render_view(view: _FollowView) -> tuple[bytes, list[dict[str, Any]], list[D
         else:
             others.append((_box(d), f"{n} {d.label}", YELLOW))
         match = view.matches[i]
-        listing.append(
-            {
-                "number": n,
-                "label": d.label,
-                "following": following,
-                "match": None if match is None else round(match, 2),
-                "score": round(d.score, 2),
-                "direction": _direction_text(bearing_deg(d, view.hfov, view.real_tilt)),
-                "box": _box_dict(d),
-            }
-        )
+        item: dict[str, Any] = {
+            "number": n,
+            "label": d.label,
+            "following": following,
+            "match": None if match is None else round(match, 2),
+            "score": round(d.score, 2),
+            "direction": _direction_text(bearing_deg(d, view.hfov, view.real_tilt)),
+            "box": _box_dict(d),
+        }
+        if view.notes[i] is not None:
+            item["note"] = view.notes[i]
+        listing.append(item)
     image = annotate(view.frame, others + chosen)  # the target's box drawn last, on top
     return image, listing, [view.candidates[i] for i in order]
 
@@ -1260,6 +1269,7 @@ class Robot:
             appearance=appearance,
             tilt=picked.tilt if picked is not None else None,
             fresh=picked is not None and time.monotonic() - picked.at < 10,
+            seen=picked.at if picked is not None else None,
         )
         beh.task = self._spawn(self._follow_loop(car, link, settings, beh, detector, label, seconds, start))
         with suppress(TimeoutError):
@@ -1285,7 +1295,7 @@ class Robot:
         )
         if view is not None and view.chosen is not None:
             image, listing, order = await asyncio.to_thread(_render_view, view)
-            car.pickable = _Pickable(time.monotonic(), view.frame, order, view.tilt)
+            car.pickable = _Pickable(_monotonic(view.at), view.frame, order, view.tilt)
             images.append(image)
             data["in_view"] = listing
             number = next(item["number"] for item in listing if item["following"])
@@ -1331,7 +1341,7 @@ class Robot:
                 }
             )
         image, listing, order = await asyncio.to_thread(_render_view, view)
-        car.pickable = _Pickable(time.monotonic(), view.frame, order, view.tilt)
+        car.pickable = _Pickable(_monotonic(view.at), view.frame, order, view.tilt)
         images = [image]
         if car.follow_reference is not None:
             images.append(car.follow_reference)
@@ -1351,9 +1361,10 @@ class Robot:
                 summary += f" It isn't sure: {status['unsure']}."
         else:
             last = (status.get("last_step") or {}).get("why", "")
-            summary = (
-                f"{car.name} can't see the {label} it follows in this picture from {age:g} s ago. {last}."
-            )
+            summary = f"{car.name} can't see the {label} it follows in this picture from {age:g} s ago"
+            if listing:
+                summary += f": {status.get('choice')}"
+            summary += f". {last}."
         if len(images) > 1:
             summary += f" The second picture is the {label} as it was when follow locked on."
         if state != "ended":
@@ -1976,7 +1987,11 @@ class Robot:
         deadline = started + seconds
         appearance = start.appearance
         target = start.target  # the latest sighting
+        target_tilt = start.tilt  # the tilt setting it was seen at
+        seen_at = start.seen if start.seen is not None else started  # when, monotonic
         expected = (target.cx, target.cy) if target is not None and start.fresh else None
+        drift = 0.0  # how far the target had just moved across the picture by itself
+        sure = 0  # sure sightings in a row
         search: Search | None = None
         misses = 0
         last_frame = started
@@ -2041,8 +2056,18 @@ class Robot:
                 except Exception:
                     log.exception("object detection failed")
                     continue
+                lost_s = max(0.0, time.monotonic() - seen_at)
                 choice = choose(
-                    candidates, descriptions, appearance, expected, min_match=cfg.follow_match_min
+                    candidates,
+                    descriptions,
+                    appearance,
+                    expected,
+                    min_match=cfg.follow_match_min,
+                    last=target,
+                    max_size_change=min(
+                        cfg.follow_size_change_max,
+                        cfg.follow_size_change * cfg.follow_size_change_growth**lost_s,
+                    ),
                 )
                 real_tilt = info["tilt"] * cfg.camera_tilt_scale
                 car.follow_view = _FollowView(
@@ -2050,6 +2075,7 @@ class Robot:
                     frame=frame,
                     candidates=candidates,
                     matches=list(choice.matches) if choice.matches else [None] * len(candidates),
+                    notes=list(choice.notes) if choice.notes else [None] * len(candidates),
                     chosen=choice.index,
                     tilt=info["tilt"],
                     real_tilt=real_tilt,
@@ -2064,10 +2090,16 @@ class Robot:
                         appearance = Appearance.of(descriptions[choice.index])
                         car.follow_reference = await asyncio.to_thread(crop, frame, _box(det))
                     elif choice.match is not None and choice.match >= LEARN_MATCH and not choice.unsure:
-                        appearance.learn(descriptions[choice.index])
+                        sure += 1
+                        if sure >= cfg.follow_learn_after:
+                            appearance.learn(descriptions[choice.index])
+                    else:
+                        sure = 0
                     if search is not None:
                         info["found_again"] = info.get("found_again", 0) + 1
-                    target, search, misses = det, None, 0
+                    drift = det.cx - expected[0] if expected is not None else 0.0
+                    target, target_tilt, search, misses = det, info["tilt"], None, 0
+                    seen_at = time.monotonic()
                     info.pop("search", None)
                     info["state"] = "following"
                     info["last_seen"] = time.time()
@@ -2088,14 +2120,22 @@ class Robot:
                     )
                 else:
                     misses += 1
+                    sure = 0
                     if misses < cfg.follow_misses:
                         continue  # one empty frame can be a missed detection: look again
                     if search is None:
                         if target is None:
                             search = Search(label, "scan")
                         else:
-                            bearing = bearing_deg(target, cfg.camera_hfov_deg, real_tilt)
-                            search = Search(label, exit_side(target), bearing)
+                            # Its direction and distance from the tilt it was last seen at.
+                            seen_tilt = (
+                                info["tilt"] if target_tilt is None else target_tilt
+                            ) * cfg.camera_tilt_scale
+                            bearing = bearing_deg(target, cfg.camera_hfov_deg, seen_tilt)
+                            far = looks_far(
+                                target, hfov_deg=cfg.camera_hfov_deg, tilt_deg=seen_tilt, tuning=tuning
+                            )
+                            search = Search(label, exit_side(target, drift=drift), bearing, far)
                         info["searches"] = info.get("searches", 0) + 1
                     info["state"] = "searching"
                     beh.ready.set()

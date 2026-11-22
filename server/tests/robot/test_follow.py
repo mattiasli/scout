@@ -6,6 +6,7 @@ import asyncio
 import math
 from collections.abc import Callable
 
+import numpy as np
 import pytest
 
 from scout.contracts import CarBusy, CarError
@@ -153,9 +154,10 @@ async def test_follow_searches_after_losing_the_target(harness: Harness) -> None
         == "it lost sight of the cat and didn't find it after turning 120°"
     )
     assert follow_state(harness)["last_seen"] is not None
-    # It vanished in the middle of the picture: it looked again, went to where it was, then turned.
+    # It vanished in the middle of the picture, close by: it looked again, then turned. It
+    # doesn't drive towards where it was, because one that close has gone past to a side.
     assert steps[0] == "search: looking again, the cat vanished in the middle of the picture"
-    assert any(why.startswith("search: forward about") for why in steps), steps
+    assert not any(why.startswith("search: forward about") for why in steps), steps
     assert steps[-1].endswith("(120° of 120°)"), steps
 
 
@@ -310,6 +312,39 @@ async def test_follow_keeps_to_the_one_picked_and_can_switch(harness: Harness) -
     moved = await harness.robot.move("car-1", direction="back", ms=200)
     assert moved.data["result"] == "completed"
     assert follow_state(harness)["ended_because"] == "a new command arrived"
+
+
+# The person stands centred; a fifth as big, a chair that looks just like them. After
+# three frames the person has gone and only the chair is left.
+PERSON = Detection("person", 0.9, 0.37, 0.1, 0.63, 0.9)
+CHAIR = Detection("person", 0.5, 0.10, 0.45, 0.15, 0.6)
+
+
+def _person_then_chair() -> ScriptedDetector:
+    seen = {"n": 0}
+
+    def script(_jpeg: bytes) -> list[Detection]:
+        seen["n"] += 1
+        return [CHAIR, PERSON] if seen["n"] <= 3 else [CHAIR]
+
+    return ScriptedDetector(script)
+
+
+@pytest.mark.detector.with_args(_person_then_chair)
+async def test_follow_doesnt_take_a_far_smaller_look_alike(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Everything looks the same, as a dark chair did to a person in dark clothes on the floor.
+    monkeypatch.setattr("scout.robot.robot.describe", lambda _image, _det: np.full(60, 1 / 20))
+    await harness.connect(world=cat_world())
+    started = await harness.robot.follow("car-1", target="person", seconds=30)
+    assert [item["following"] for item in started.data["in_view"]] == [False, True]  # the biggest
+    await wait_for(lambda: follow_state(harness).get("state") == "searching", within=4)
+    view = await harness.robot.follow_view("car-1")
+    assert [item["following"] for item in view.data["in_view"]] == [False]
+    assert "5.3× smaller than the target was" in view.data["in_view"][0]["note"]
+    assert "the one in view that looks most like it (match 1.00) is 5.3× smaller" in view.data["summary"]
+    await harness.robot.stop("car-1")
 
 
 async def test_follow_searches_for_a_target_out_of_sight(harness: Harness) -> None:

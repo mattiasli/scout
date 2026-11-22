@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 
 import numpy as np
 import pytest
@@ -18,9 +19,10 @@ from scout.robot.follow import (
     bearing_deg,
     exit_side,
     expected_position,
+    looks_far,
 )
 from scout.robot.imaging import GREEN, YELLOW, annotate, crop, jpeg_size
-from scout.robot.tracker import Appearance, choose, describe, open_picture, similarity
+from scout.robot.tracker import Appearance, choose, describe, open_picture, similarity, size_change
 
 RED, BLUE, OLIVE, MUSTARD = (200, 30, 30), (30, 40, 160), (40, 160, 60), (220, 200, 40)
 LEFT = (0.10, 0.10, 0.36, 0.95)
@@ -139,6 +141,61 @@ def test_unreadable_pictures_are_refused() -> None:
         open_picture(b"not a jpeg")
 
 
+# ------------------------------------------------------------------------ size
+
+# On the floor, a dark chair a quarter as wide as the person followed matched their dark
+# clothes at 0.95. Here both look exactly alike.
+CHAIR = (0.10, 0.40, 0.16, 0.60)
+
+
+def test_a_look_alike_far_narrower_than_the_target_was_isnt_taken() -> None:
+    look = describe(scene((LEFT, RED, BLUE)), person(LEFT))
+    me = Appearance.of(look)
+    last = person(RIGHT)  # 0.26 wide, a moment ago
+    both = choose(
+        [person(CHAIR), person(RIGHT)], [look, look], me, (0.13, 0.5),
+        min_match=0.45, last=last, max_size_change=2.5,
+    )  # fmt: skip
+    assert both.index == 1  # though the chair is where the target was expected
+    assert both.notes[0] is not None and "4.3× smaller than the target was" in both.notes[0]
+    assert both.notes[1] is None
+    alone = choose([person(CHAIR)], [look], me, None, min_match=0.45, last=last, max_size_change=2.5)
+    assert alone.index is None
+    assert alone.why == (
+        "the one in view that looks most like it (match 1.00) is 4.3× smaller than the target was, "
+        "too big a change to be it"
+    )
+    # Out of sight long enough, the allowance has grown, and it may be the target farther away.
+    later = choose([person(CHAIR)], [look], me, None, min_match=0.45, last=last, max_size_change=5.0)
+    assert later.index == 0
+    # Nothing to compare with: no size check.
+    assert choose([person(CHAIR)], [look], me, None, min_match=0.45, max_size_change=2.5).index == 0
+
+
+def test_the_nearer_size_wins_between_look_alikes() -> None:
+    look = describe(scene((LEFT, RED, BLUE)), person(LEFT))
+    me = Appearance.of(look)
+    same = person(RIGHT)
+    wider = person((0.05, 0.05, 0.55, 0.95))  # 1.4 times as big: allowed, but less likely
+    choice = choose([wider, same], [look, look], me, None, min_match=0.45, last=same, max_size_change=2.5)
+    assert choice.index == 1
+
+
+def test_a_box_cut_off_at_an_edge_may_be_bigger_than_it_looks() -> None:
+    whole = person((0.40, 0.1, 0.66, 0.9))
+    at_the_edge = person((0.0, 0.1, 0.08, 0.9))  # stepping out of the picture on the left
+    assert size_change(at_the_edge, whole) == 0.0
+    assert size_change(whole, at_the_edge) == 0.0  # back in view: as wide as it really is
+    knees = person((0.40, 0.3, 0.66, 1.0))  # the camera tilted up: cut off at the knees
+    assert size_change(knees, whole) == 0.0
+    assert size_change(person(CHAIR), whole) == pytest.approx(
+        (math.log(0.06 / 0.26) + math.log(0.2 / 0.8)) / 2
+    )
+    side_on = Detection("cat", 0.9, 0.3, 0.5, 0.6, 0.7)
+    facing = Detection("cat", 0.9, 0.4, 0.5, 0.52, 0.7)  # 2.5 times narrower, as tall
+    assert math.exp(-size_change(facing, side_on)) == pytest.approx(math.sqrt(2.5))
+
+
 # -------------------------------------------------------------------- geometry
 
 
@@ -172,6 +229,19 @@ def test_exit_side() -> None:
     assert exit_side(Detection("cat", 0.9, 0.4, 0.4, 0.6, 0.6)) == "middle"
     # A tall person filling the picture top to bottom left by neither end.
     assert exit_side(Detection("person", 0.9, 0.4, 0.0, 0.6, 1.0)) == "middle"
+    # Walking right, it carries on out of the picture on the right. On the floor a person
+    # close by moved from the middle to 0.51-0.87 in one frame and then wasn't seen again.
+    walking = Detection("person", 0.9, 0.51, 0.0, 0.87, 0.94)
+    assert exit_side(walking) == "middle"
+    assert exit_side(walking, drift=0.18) == "right"
+    assert exit_side(Detection("cat", 0.9, 0.2, 0.4, 0.4, 0.6), drift=-0.15) == "left"
+    assert exit_side(Detection("cat", 0.9, 0.4, 0.4, 0.6, 0.6), drift=0.02) == "middle"  # jitter
+
+
+def test_looks_far() -> None:
+    assert looks_far(person((0.45, 0.1, 0.55, 0.9)), hfov_deg=81.0)
+    assert not looks_far(person((0.37, 0.1, 0.63, 0.9)), hfov_deg=81.0)  # the width follow keeps
+    assert not looks_far(person((0.3, 0.0, 0.7, 1.0)), hfov_deg=81.0)
 
 
 # ---------------------------------------------------------------------- search
@@ -234,6 +304,10 @@ def test_search_drives_towards_where_it_vanished() -> None:
     assert all(s[0] == 0 for s in blocked)
     off_to_the_side = steps(Search("cat", "middle", 35.0))
     assert all(s[0] == 0 for s in off_to_the_side)  # too far round to drive towards
+    # It was close: it has gone past to a side, so it looks again and turns towards where
+    # it was, without driving.
+    close = steps(Search("cat", "middle", 12.0, far=False))
+    assert [s[0] for s in close] == [0, 0, 0, 0] and all(s[1] > 0 for s in close[1:])
 
 
 def test_a_search_for_a_person_looks_at_head_height() -> None:

@@ -211,6 +211,32 @@ def plan(
     return FollowStep(move.vx, move.wz, move.ms, f"{tilt_why}; {move.why}", tilt)
 
 
+def _size(
+    target: Detection, hfov_deg: float, tilt_deg: float, t: FollowTuning
+) -> tuple[float, float, float, str]:
+    """How big the target looks, the size wanted, roughly how far away that is (cm), and
+    which measure it is ("width" or "height"). ``tilt_deg`` is the camera's real angle."""
+    cut_off = target.y0 <= t.top_edge or target.y1 >= t.bottom_edge
+    if target.label == "person" or cut_off:
+        # Apparent width shrinks with the distance along the line of sight and grows away
+        # from the middle of the picture. Undoing both leaves the distance across the floor.
+        _, elevation = _direction(0.5, target.cy, hfov_deg, tilt_deg)
+        off_middle = _above_middle_deg(target.cy, hfov_deg)
+        size = target.width * math.cos(math.radians(off_middle)) / math.cos(math.radians(elevation))
+        return size, t.target_width, t.target_width_cm, "width"
+    return target.height, t.target_height, t.target_height_cm, "height"
+
+
+def looks_far(
+    target: Detection, *, hfov_deg: float, tilt_deg: float = 0.0, tuning: FollowTuning | None = None
+) -> bool:
+    """Whether ``target`` is farther than follow keeps to (``tilt_deg`` is the camera's
+    real angle)."""
+    t = tuning or FollowTuning()
+    size, goal, _, _ = _size(target, hfov_deg, tilt_deg, t)
+    return size <= 0 or goal / size > 1 + t.size_deadband
+
+
 def _move(
     target: Detection,
     cm: int | None,
@@ -233,16 +259,7 @@ def _move(
             why = f"turn {turned:.0f}° {side}: the {name} is {abs(angle):.0f}° off centre"
             return FollowStep(0, wz, ms, why)
 
-    cut_off = target.y0 <= t.top_edge or target.y1 >= t.bottom_edge
-    if name == "person" or cut_off:
-        # Apparent width shrinks with the distance along the line of sight and grows away
-        # from the middle of the picture. Undoing both leaves the distance across the floor.
-        _, elevation = _direction(0.5, target.cy, hfov_deg, tilt_deg)
-        off_middle = _above_middle_deg(target.cy, hfov_deg)
-        size = target.width * math.cos(math.radians(off_middle)) / math.cos(math.radians(elevation))
-        goal, goal_cm, cue = t.target_width, t.target_width_cm, "width"
-    else:
-        size, goal, goal_cm, cue = target.height, t.target_height, t.target_height_cm, "height"
+    size, goal, goal_cm, cue = _size(target, hfov_deg, tilt_deg, t)
     if size <= 0:
         return _hold(f"the {name}'s box is empty")
     ratio = goal / size  # its distance / the target distance
@@ -293,12 +310,20 @@ def expected_position(
     return _pixel(yaw - turned_deg, elevation, hfov_deg, tilt_after)
 
 
-def exit_side(target: Detection, *, edge: float = 0.08) -> str:
+def exit_side(target: Detection, *, drift: float = 0.0, edge: float = 0.08) -> str:
     """Where a target last seen as ``target`` most likely left the picture: "left",
-    "right", "top", "bottom", or "middle" when it was nowhere near an edge."""
-    if target.x0 <= edge and target.cx < 0.5:
+    "right", "top", "bottom", or "middle" when it was nowhere near an edge.
+
+    ``drift`` is how far it had just moved across the picture by itself, beyond what the
+    car's turning explains (in picture widths, right positive): something walking out of
+    the picture is taken to carry on the way it was going.
+    """
+    drift = max(-0.3, min(0.3, drift))
+    x0, x1 = target.x0 + drift, target.x1 + drift
+    cx = (x0 + x1) / 2
+    if x0 <= edge and cx < 0.5:
         return "left"
-    if target.x1 >= 1 - edge and target.cx > 0.5:
+    if x1 >= 1 - edge and cx > 0.5:
         return "right"
     if target.cy < 0.25 and target.y0 <= edge:
         return "top"
@@ -312,12 +337,15 @@ class Search:
     """Looking for a target that is out of sight, one step at a time.
 
     ``side`` is where it left the picture (``exit_side``), or "scan" when it hasn't been
-    seen at all; ``bearing_deg`` is where it was last seen (right is positive).
+    seen at all; ``bearing_deg`` is where it was last seen (right is positive); ``far``
+    whether it was farther away than follow keeps to (``looks_far``). Only then does the
+    search drive towards where it vanished: one that close has most likely gone past to a side.
     """
 
     label: str
     side: str
     bearing_deg: float = 0.0
+    far: bool = True
     turned_deg: float = 0.0
     looked_again: bool = False
     tilted: bool = False
@@ -343,7 +371,7 @@ class Search:
                 return FollowStep(
                     0, 0, 0, f"search: looking again, the {name} vanished in the middle of the picture"
                 )
-            if not self.drove and abs(self.bearing_deg) <= t.search_drive_within_deg:
+            if not self.drove and self.far and abs(self.bearing_deg) <= t.search_drive_within_deg:
                 if not self.faced and abs(self.bearing_deg) >= t.centre_deadband_deg:
                     self.faced = True
                     side = "right" if self.bearing_deg > 0 else "left"
