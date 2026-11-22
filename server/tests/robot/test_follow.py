@@ -13,7 +13,7 @@ import pytest
 from scout.contracts import CarBusy, CarError
 from scout.robot import Detection, DetectorUnavailable, InvalidRequest
 from scout.robot.detector import COCO_LABELS
-from scout.robot.robot import _check, _Checking
+from scout.robot.robot import _check, _Checking, _lookalike
 from scout.robot.tracker import Choice
 from scout_sim import Cat, World
 
@@ -371,9 +371,12 @@ def _seen(score: float) -> Detection:
     return Detection("person", score, 0.4, 0.1, 0.6, 0.9)
 
 
-def check(checking: _Checking | None, choice: Choice, score: float, **kw: bool) -> _Checking | None:
+def check(
+    checking: _Checking | None, choice: Choice, score: float, *, seen: Detection | None = None, **kw: bool
+) -> _Checking | None:
     kw = {"found_again": False, "confirmed": False, **kw}
-    return _check(checking, choice, _seen(score), "person", 0.85, score_drop=0.7, confirm_frames=2, **kw)
+    det = seen if seen is not None else _seen(score)
+    return _check(checking, choice, det, "person", 0.85, score_drop=0.7, confirm_frames=2, **kw)
 
 
 def test_when_follow_holds_back_and_for_how_long() -> None:
@@ -404,6 +407,42 @@ def test_when_follow_holds_back_and_for_how_long() -> None:
     for _ in range(5):
         other = check(other, _sighting(0.95), 0.85)
     assert other is not None
+
+
+def test_close_up_and_cut_off_the_detector_being_less_sure_is_no_doubt() -> None:
+    # On the floor, 80 cm from a person with the camera tilted up all the way, the detector
+    # was half as sure of them as from 2 m.
+    close = Detection("person", 0.45, 0.3, 0.0, 0.7, 1.0)
+    assert check(None, _sighting(), 0.45, seen=close) is None
+    # Held back while all of it was in view, it goes on once it is close and cut off.
+    held = check(None, _sighting(), 0.45)
+    assert held is not None
+    held = check(held, _sighting(), 0.45, seen=close)
+    assert check(held, _sighting(), 0.45, seen=close) is None
+    # But found again after losing it, it must look as sure as usual (or be picked) to go on.
+    found = check(None, _sighting(), 0.45, seen=close, found_again=True)
+    for _ in range(5):
+        found = check(found, _sighting(), 0.45, seen=close)
+    assert found is not None and found.why == "it lost sight of the person and has found one again"
+
+
+def test_what_counts_as_a_look_alike() -> None:
+    target = Detection("person", 0.85, 0.40, 0.10, 0.60, 0.90)
+    twin = Detection("person", 0.80, 0.70, 0.10, 0.90, 0.90)
+    legs = Detection("person", 0.80, 0.42, 0.50, 0.58, 0.90)
+    rack = Detection("person", 0.40, 0.70, 0.10, 0.90, 0.90)
+
+    def lookalike(other: Detection, matches: tuple[float, float]) -> int | None:
+        choice = Choice(0, matches[0], False, "", matches)
+        return _lookalike([target, other], choice, 0.85, score_drop=0.7, margin=0.15)
+
+    assert lookalike(twin, (0.9, 0.85)) == 1  # dressed alike
+    assert lookalike(twin, (0.9, 0.7)) is None  # matching less well than the target does
+    assert lookalike(twin, (0.55, 0.55)) is None  # nor well at all
+    assert lookalike(legs, (0.9, 0.95)) is None  # their own legs, boxed as well
+    assert lookalike(rack, (0.9, 0.9)) is None  # the detector is far less sure of it
+    unseen = Choice(None, 0.85, False, "", (0.85,))  # the target out of sight: nothing to compare
+    assert _lookalike([twin], unseen, 0.85, score_drop=0.7, margin=0.15) is None
 
 
 # The person follow locks on to, then nobody, then a coat rack where the person was that
@@ -520,6 +559,39 @@ async def test_after_a_look_alike_has_been_seen_only_a_pick_lets_it_drive_again(
         assert isinstance(step, dict) and step["vx"] == 0, step
         await asyncio.sleep(0.2)
     assert follow_state(harness).get("checking")
+    await harness.robot.stop("car-1")
+
+
+# One person, boxed whole and their legs as well. They go out of sight and come back.
+def _person_and_their_legs() -> ScriptedDetector:
+    seen = {"n": 0}
+    body = Detection("person", 0.85, 0.42, 0.2, 0.58, 0.9)
+    legs = Detection("person", 0.7, 0.46, 0.55, 0.58, 0.9)
+
+    def script(_jpeg: bytes) -> list[Detection]:
+        seen["n"] += 1  # the first call is find's
+        if 5 <= seen["n"] <= 7:
+            return []
+        return [body, legs]
+
+    return ScriptedDetector(script)
+
+
+@pytest.mark.detector.with_args(_person_and_their_legs)
+async def test_a_second_box_on_the_same_person_is_no_look_alike(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scout.robot.robot.describe", lambda _image, _det: np.full(60, 1 / 20))
+    await harness.connect(world=cat_world())
+    await harness.robot.find("car-1", target="person")
+    await harness.robot.follow("car-1", pick=1, seconds=30)
+    await wait_for(lambda: bool(follow_state(harness).get("found_again")), within=8)
+    # It holds back a moment as it finds them again, then goes on without a pick.
+    await wait_for(lambda: follow_state(harness).get("checking") is None, within=6)
+    assert follow_state(harness)["event"] == (
+        "follow is holding back from driving, as it lost sight of the person and has found one again"
+    )
+    assert follow_state(harness)["unsure"] is None
     await harness.robot.stop("car-1")
 
 

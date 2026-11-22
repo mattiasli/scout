@@ -15,7 +15,7 @@ import math
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,7 +81,7 @@ from scout.robot.motion import (
     turn_rate,
 )
 from scout.robot.text import ago, cm_text, heading_label, plural, reason_phrase
-from scout.robot.tracker import Appearance, Choice, choose, describe, open_picture
+from scout.robot.tracker import SAME_ONE, Appearance, Choice, choose, cut_off, describe, open_picture, overlap
 
 log = logging.getLogger("scout.robot")
 
@@ -392,6 +392,7 @@ class _Checking:
     baseline: float | None  # how sure the detector usually was of the target, before
     streak: int = 0  # sure sightings in a row since
     needs_pick: bool = False  # only the AI can settle it, by picking
+    found_again: bool = False  # it had lost the target, so a cut-off view excuses nothing
 
 
 def _check(
@@ -413,14 +414,16 @@ def _check(
     close by is then no reason to doubt it, because the AI saw both when it picked.
     ``lookalikes`` means another one that looks alike has been in view during this follow:
     found again after losing it, it may be that other one, which nothing but the AI
-    looking can rule out, so it holds until a pick.
+    looking can rule out, so it holds until a pick. Close up, with the target cut off at an
+    edge of the picture, the detector is less sure of it, so that alone is no reason to
+    doubt it, unless follow has just found it again.
     """
     doubt = None
     if found_again:
         doubt = f"it lost sight of the {label} and has found one again"
         if lookalikes:
             doubt += f", and another {label} that looks alike has been in view, so it needs a pick to go on"
-    elif typical_score is not None and det.score < score_drop * typical_score:
+    elif typical_score is not None and det.score < score_drop * typical_score and not cut_off(det):
         doubt = (
             f"the detector is much less sure this is a {label} ({det.score:.2f}, "
             f"against {typical_score:.2f} before)"
@@ -429,7 +432,7 @@ def _check(
         doubt = choice.why
     if doubt is not None and (checking is None or found_again):
         baseline = typical_score if checking is None else checking.baseline
-        checking = _Checking(doubt, baseline, needs_pick=found_again and lookalikes)
+        checking = _Checking(doubt, baseline, needs_pick=found_again and lookalikes, found_again=found_again)
     if checking is None:
         return None
     if checking.needs_pick:
@@ -438,10 +441,42 @@ def _check(
         choice.match is not None
         and choice.match >= LEARN_MATCH
         and (confirmed or not choice.unsure)
-        and (checking.baseline is None or det.score >= score_drop * checking.baseline)
+        and (
+            checking.baseline is None
+            or det.score >= score_drop * checking.baseline
+            or (cut_off(det) and not checking.found_again)
+        )
     )
     checking.streak = checking.streak + 1 if sure else 0
     return None if checking.streak >= confirm_frames else checking
+
+
+def _lookalike(
+    candidates: Sequence[Detection],
+    choice: Choice,
+    typical_score: float | None,
+    *,
+    score_drop: float,
+    margin: float,
+) -> int | None:
+    """Another one in view that could be taken for the target, if any. It must look about as
+    alike as the target does (at least LEARN_MATCH, and no more than ``margin`` less), the
+    detector must be about as sure of it, and its box mustn't be mostly inside the target's
+    (the detector sometimes boxes a person's legs as well). Judged only while the target is
+    in view, to compare with."""
+    if choice.index is None or choice.match is None:
+        return None
+    target = candidates[choice.index]
+    for i, m in enumerate(choice.matches):
+        other = candidates[i]
+        if (
+            i != choice.index
+            and m >= max(LEARN_MATCH, choice.match - margin)
+            and (typical_score is None or other.score >= score_drop * typical_score)
+            and overlap(other, target) <= SAME_ONE
+        ):
+            return i
+    return None
 
 
 def _wake(car: _Car, what: str) -> None:
@@ -2220,12 +2255,23 @@ class Robot:
                 )
                 info["in_view"] = len(candidates)
                 info["choice"] = choice.why
-                for i, m in enumerate(choice.matches):
-                    plausible = (
-                        typical_score is None or candidates[i].score >= cfg.follow_score_drop * typical_score
+                if not lookalikes:
+                    other = _lookalike(
+                        candidates,
+                        choice,
+                        typical_score,
+                        score_drop=cfg.follow_score_drop,
+                        margin=cfg.follow_lookalike_margin,
                     )
-                    if i != choice.index and m >= cfg.follow_match_min and plausible:
+                    if other is not None:
                         lookalikes = True
+                        log.info(
+                            "follow: another %s looks alike (match %.2f against %.2f, detector %.2f)",
+                            label,
+                            choice.matches[other],
+                            choice.match,
+                            candidates[other].score,
+                        )
                 det: Detection | None = None
                 if choice.index is not None:
                     det = candidates[choice.index]
@@ -2257,7 +2303,9 @@ class Robot:
                     if checking is not None:
                         sure = 0  # nothing learnt from what may be something else
                     else:
-                        if typical_score is None:
+                        if cut_off(det):
+                            pass  # seen only in part, the detector is less sure of it than usual
+                        elif typical_score is None:
                             typical_score = det.score
                         else:
                             typical_score += cfg.follow_score_rate * (det.score - typical_score)

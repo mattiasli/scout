@@ -89,10 +89,17 @@ class RobotConfig:
     # has lost it and found one again, or when the detector is less than follow_score_drop
     # times as sure of it as usual (a coat on a hook taken for a person), it only turns and
     # tilts until follow_confirm_frames sure sightings in a row, or the AI confirms with a
-    # pick. follow_score_rate is how fast "as usual" follows the detector's confidence.
+    # pick. follow_score_rate is how fast "as usual" follows the detector's confidence. Close
+    # up, with the target cut off at an edge of the picture, the detector is less sure of it,
+    # so that alone is no reason to hold back, unless follow has just found it again.
     follow_score_drop: float = 0.7
     follow_score_rate: float = 0.2
     follow_confirm_frames: int = 2
+    # Once another one in view has looked about as alike as the target (matching at least
+    # LEARN_MATCH and no more than follow_lookalike_margin less than the target does), with
+    # the detector about as sure of it, finding the target again after losing it needs a
+    # pick. A box mostly inside the target's (its legs, boxed as well) doesn't count.
+    follow_lookalike_margin: float = 0.15
     follow_start_wait_s: float = 4.0  # follow returns once it has locked on, or after this
     follow_pick_valid_s: float = 120.0  # how long find's or follow_view's numbers stay valid
     find_min_score: float = 0.35
