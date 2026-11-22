@@ -62,6 +62,7 @@ Measured on a hard floor with a tape measure, driving through the server's `move
 | Forward 1.5 s at 20 % | 90 | 122 | 28.2 cm (18.8 cm/s) | 18.4 cm/s |
 | Forward at 30 %, the obstacle-stop run | 90 | 138 | about 54 cm in 2.5 s (21.5 cm/s) | 21.4 cm/s |
 | Forward 1 s at 50 % | 90 | 172 | 28 cm | 28.4 cm/s |
+| Forward 1 s at 80 % | 110 | 226 | 35 cm | 35.9 cm/s |
 | Sideways 1 s at 50 % | 90 | 172 | rear wheels 25 cm, front 23.5 cm | 24.2 cm/s |
 | Turn at 20 % | 110 | 138 | 85° in 0.85 s, 88° in 0.89 s (twice) | 99.4°/s |
 | Turn 1 s at 50 % | 90 | 172 | 132° | 132°/s |
@@ -69,8 +70,9 @@ Measured on a hard floor with a tape measure, driving through the server's `move
 | Turn 1 s at 100 % | 110 | 255 | 202° | 202°/s |
 
 The model column uses the calibration that fits these runs: 202°/s turning, 43.5 cm/s
-forward and 37 cm/s sideways at 100 %. The turns are the table's own points. With a
-straight line through 25 instead, the 80 % turns came out 8 % short. Sideways moves yaw
+forward and 37 cm/s sideways at 100 %. The turns are the table's own points; the 80 % forward
+run, measured afterwards, confirms forward follows the same shape. With a straight
+line through 25 instead, the 80 % turns came out 8 % short. Sideways moves yaw
 slightly counter-clockwise. A forward move at 30 % from 65 cm stopped at 14 cm with the
 obstacle distance at 15 cm.
 
