@@ -13,9 +13,9 @@ namespace cfg {
 
 constexpr const char* kFirmwareVersion = "0.1.0";
 
-// The car-link address. Empty on purpose: the owner enters it on the setup page, and
-// the firmware stays in setup mode until there is one.
-constexpr const char* kDefaultServerUrl = "";
+// The car-link address used until one is saved on the setup page. This is the public
+// Scout server; build with your own address if you run your own server.
+constexpr const char* kDefaultServerUrl = "wss://scout-production-a08160b6.up.railway.app/car/ws";
 
 // ---------------------------------------------------------------- serial link to the UNO
 

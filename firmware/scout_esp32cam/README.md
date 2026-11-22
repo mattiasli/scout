@@ -125,7 +125,8 @@ You need a phone or laptop with WiFi, the Scout server's address and the car's k
 4. Under **WiFi networks**, pick your home network from the list (or type its name if
    it's hidden), enter its password and press **Add network**. Only 2.4 GHz networks
    work. You can save up to five; the car tries the strongest one it can see first.
-5. Under **Server**, enter the server address, for example `wss://scout.example.com/car/ws`,
+5. Under **Server**, the address of the public Scout server is filled in already. If you
+   run your own server, enter its address, for example `wss://scout.example.com/car/ws`,
    and press **Save address**.
 6. Under **Car key**, paste the key and press **Save key**. The page only ever shows
    whether a key is set, never the key itself.
