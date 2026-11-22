@@ -93,7 +93,9 @@ async def test_follow_ends_when_time_is_up(harness: Harness) -> None:
     assert follow_state(harness)["ended_because"] == "the time was up"
     # The stream was re-sent before it ran out (3 s streams, re-sent every 1.5 s).
     assert sum(1 for m in car.received if m.get("t") == "stream" and m.get("on")) >= 3
-    assert any(m.get("t") == "stop" for m in car.received)
+    # The robot sends the stop before it marks the follow as ended, but the car may not
+    # have read it yet.
+    await wait_for(lambda: any(m.get("t") == "stop" for m in car.received))
 
 
 @pytest.mark.detector.with_args(lambda: ScriptedDetector(lambda _jpeg: []))
