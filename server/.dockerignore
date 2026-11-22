@@ -1,0 +1,19 @@
+# Only pyproject.toml, uv.lock, README.md and src/ go into the image.
+.venv/
+data/
+tests/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.db
+*.db-wal
+*.db-shm
+*.onnx
+.env
+.env.*
+Dockerfile
+.dockerignore

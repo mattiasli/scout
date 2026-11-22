@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Admin · Scout{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<p><a href="/admin/activity">Activity log</a></p>
+
+<section aria-labelledby="cars">
+  <h2 id="cars">Cars</h2>
+  {% if cars %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Car</th><th scope="col">State</th><th scope="col">Open to</th><th scope="col">Driver</th></tr></thead>
+    <tbody>
+    {% for row in cars %}
+      <tr>
+        <td><a href="/admin/cars/{{ row.car.car_id }}">{{ row.car.name }}</a> <span class="muted">{{ row.car.car_id }}</span></td>
+        <td><span class="dot {{ 'on' if row.online else 'off' }}" aria-hidden="true"></span> {{ "Online" if row.online else "Offline" }}</td>
+        <td>{{ "Admins only" if row.car.availability == "admins" else "Everyone approved" }}</td>
+        <td>{{ row.driver.login if row.driver else "Nobody" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No cars yet. Add one below, then put its key on the car.</p>
+  {% endif %}
+  <details{% if not cars %} open{% endif %}>
+    <summary>Add a car</summary>
+    <form method="post" action="/admin/cars" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="car_id">Car id <span class="muted">(lowercase letters, digits and dashes)</span></label>
+      <input id="car_id" name="car_id" value="{{ 'scout-1' if not cars else '' }}" pattern="[a-z0-9][a-z0-9\-]{0,31}" maxlength="32" required>
+      <label for="car_name">Name</label>
+      <input id="car_name" name="name" value="Scout" maxlength="40" required>
+      <button type="submit">Add car</button>
+    </form>
+  </details>
+</section>
+
+<section aria-labelledby="users">
+  <h2 id="users">Users</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">User</th><th scope="col">Status</th><th scope="col">Joined</th><th scope="col">Approved</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>
+          {% if u.avatar_url %}<img src="{{ u.avatar_url }}" alt="" width="24" height="24" class="avatar small">{% endif %}
+          <a href="https://github.com/{{ u.login }}">{{ u.login }}</a>{% if u.name %} <span class="muted">{{ u.name }}</span>{% endif %}
+        </td>
+        <td>
+          {% if u.status == "active" %}<span class="tag ok">Approved</span>{% elif u.status == "waiting" %}<span class="tag wait">Waiting</span>{% else %}<span class="tag bad">Suspended</span>{% endif %}
+          {% if u.is_owner %}<span class="tag">Owner</span>{% elif u.is_admin %}<span class="tag">Admin</span>{% endif %}
+        </td>
+        <td>{{ u.created_at | when }}</td>
+        <td>{{ u.approved_at | when if u.approved_at else "—" }}</td>
+        <td class="actions">
+          {% if u.is_owner %}
+            <span class="muted">Protected</span>
+          {% else %}
+            {% if u.status != "active" %}
+            <form method="post" action="/admin/users/{{ u.id }}/approve" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="small">Approve</button></form>
+            {% endif %}
+            {% if u.status != "suspended" and u.id != user.id %}
+            <form method="post" action="/admin/users/{{ u.id }}/suspend" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="small danger">Suspend</button></form>
+            {% endif %}
+            {% if u.status == "active" and not u.is_admin %}
+            <form method="post" action="/admin/users/{{ u.id }}/make-admin" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="small secondary">Make admin</button></form>
+            {% elif u.is_admin and u.id != user.id %}
+            <form method="post" action="/admin/users/{{ u.id }}/remove-admin" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="small secondary">Remove admin</button></form>
+            {% endif %}
+          {% endif %}
+          <a class="small" href="/admin/activity?user={{ u.id }}">Activity</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

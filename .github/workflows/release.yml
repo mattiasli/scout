@@ -1,0 +1,65 @@
+# Builds both firmwares for a version tag (v1.2.3) and attaches them to a GitHub release.
+# The ESP32 app image (scout_esp32cam.bin) is what the admin page installs over WiFi.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  AVR_CORE: "arduino:avr@1.8.8"
+  ESP32_CORE: "esp32:esp32@3.3.13"
+  ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  ESP32_FQBN: "esp32:esp32:esp32cam:PartitionScheme=min_spiffs"
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install cores
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install "$AVR_CORE"
+          arduino-cli core install "$ESP32_CORE" --additional-urls "$ESP32_INDEX"
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn arduino:avr:uno --libraries firmware/libraries \
+            --build-path build/uno --output-dir build/uno-out firmware/scout_uno
+          arduino-cli compile --fqbn "$ESP32_FQBN" --libraries firmware/libraries \
+            --build-path build/esp32cam --output-dir build/esp32cam-out firmware/scout_esp32cam
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          cp build/uno-out/scout_uno.ino.hex dist/scout_uno.hex
+          cp build/esp32cam-out/scout_esp32cam.ino.bin dist/scout_esp32cam.bin
+          cp build/esp32cam-out/scout_esp32cam.ino.merged.bin dist/scout_esp32cam_full.bin
+          cd dist
+          for f in *; do sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"; done
+          ls -l
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: dist/*
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: firmware
+          path: dist
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true

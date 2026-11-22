@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_commands.html" import install_commands %}
+{% block title %}Connect an AI · Scout{% endblock %}
+{% block content %}
+<h1>Connect an AI</h1>
+<p>Scout works with any AI client that supports remote MCP servers over HTTP. You need a personal token first.</p>
+<ol class="steps">
+  <li>{% if user %}Open <a href="/account">your account</a>{% else %}<a href="/login">Sign in with GitHub</a>{% endif %} and make a token. You see it only once, together with these commands filled in.</li>
+  <li>Wait for an admin to approve your account if it's new.</li>
+  <li>Run the command for your client below, with your token instead of <code>&lt;your-token&gt;</code>.</li>
+</ol>
+<p>The Scout MCP address is <code>{{ mcp_url }}</code>.</p>
+{{ install_commands("<your-token>", false) }}
+
+<h2>Good first requests</h2>
+<ul>
+  <li>"Use Scout to check its status, then look around and tell me what you see."</li>
+  <li>"Drive Scout to the hallway and check whether the front door is closed."</li>
+  <li>"Find my keys with Scout."</li>
+  <li>"Follow the cat for a minute."</li>
+</ul>
+{% endblock %}
