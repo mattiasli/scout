@@ -181,7 +181,9 @@ a stand with its wheels off the ground:
 - [x] `wheels`: the bit map in `protocol/uart.md` matches the real motor wiring.
 - [x] `pwmmap`: D5 drives the right wheels and D6 the left ones, so the default build
       uses per-side PWM.
-- [ ] `MINPWM`: the lowest PWM that still turns every wheel on the floor (default 90).
+- [x] `MINPWM`: on the floor the wheels only hum at 60, 75 and 90 and start at about
+      105, so the admin page sets 110 (the firmware default stays 90). Speed then grows
+      with the PWM above about 25; see "Speed on the floor" in `docs/hardware.md`.
 - [x] Tilt: positive tilts up. Servo angle 90 pointed the camera about 9 degrees up, so
       level is now 81 (`kServoLevelAngle`). The whole -40..+40 range moves freely
       without touching the mount; it could be widened after another check.
@@ -190,8 +192,8 @@ a stand with its wheels off the ground:
 - [ ] Ultrasonic: readings against a tape measure, and what the module does with no
       echo (a long pulse, which is discarded, or no pulse, which gives `-1`).
 - [ ] `obstacle`: a forward move doesn't start with a hand 8-9 cm in front (checked on
-      the bench); still to see: a running move stops, and the default 15 cm suits the
-      car's stopping distance at full speed on the floor.
+      the bench), and on the floor a move at 30 % stopped at 14 cm with the default
+      15 cm. Still to see: whether 15 cm suits the stopping distance at full speed.
 - [ ] Motors stay still while the UNO is in reset or being flashed (all UNO pins float
       then; the shield's pull-up on OE# should keep the drivers off).
 - [ ] Reset flags: what `BOOT` reports after power-on and after a watchdog reset with

@@ -804,7 +804,7 @@ class Robot:
     async def turn(
         self, car_id: str, *, direction: TurnDirection, degrees: int, speed: int = 50, look: bool = False
     ) -> ActionResult:
-        """Rotate in place. The duration comes from ``turn_deg_per_s × speed/100``."""
+        """Rotate in place. The duration comes from ``turn_rate`` (calibration and motor curve)."""
         direction = _choice("direction", direction, ("left", "right"))  # type: ignore[assignment]
         degrees = _int_arg("degrees", degrees, 1, 360)
         speed = _int_arg("speed", speed, 20, 100)

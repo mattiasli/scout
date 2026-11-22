@@ -45,8 +45,9 @@ class CarSettings:
     """Per-car settings, stored by the app side and editable by admins.
 
     The first five are sent to the car in every ``welcome``. The calibration values are
-    rough speeds at 100 % used to turn "turn 90 degrees" into a duration; they are
-    tuned by measuring on the real floor.
+    the speeds at 100 % used to turn "turn 90 degrees" into a duration; they are tuned
+    by measuring on the real floor. Slower percentages follow the motor curve in
+    ``scout.robot.motion.speed_share``, which also depends on ``min_pwm``.
     """
 
     name: str = "Scout"

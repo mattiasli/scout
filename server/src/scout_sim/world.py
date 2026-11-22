@@ -4,9 +4,11 @@ Units are centimetres and seconds. Headings are radians, counter-clockwise from 
 (maths convention); the car's ``wz`` is clockwise-positive like the UART protocol, so a
 positive ``wz`` lowers the heading.
 
-The car is a disc for collisions. Its motion comes from the four wheel speeds through
-the mecanum forward kinematics, scaled by the speeds in ``Physics``, with a little
-random error per move so dead reckoning drifts the way it does on a real floor.
+The car is a disc for collisions. Its motion comes from the four wheels' PWM duties:
+each motor's speed follows the curve measured on the AD176 (``motor_speeds``), and the
+mecanum forward kinematics, scaled by the speeds in ``Physics``, turn those into body
+motion, with a little random error per move so dead reckoning drifts the way it does on
+a real floor.
 """
 
 from __future__ import annotations
@@ -105,6 +107,11 @@ class Physics:
     pwm_model: PwmModel = "split"
     coast_divisor: int = 4  # kCoastDivisor: 4 = 25 %
     pwm5_left: bool = False  # the AD176's wiring: D5 drives the right wheels, D6 the left ones
+    # The motors, as measured on the AD176: speed is proportional to the PWM duty above
+    # zero_speed_pwm, and from a standstill a motor only starts at start_pwm or more
+    # (below that it hums and stays put).
+    zero_speed_pwm: float = 25.0
+    start_pwm: int = 100
     car_radius: float = 12.0  # for collisions
     sensor_offset: float = 10.0  # ultrasonic and camera, ahead of the turning centre
 
@@ -123,12 +130,11 @@ def mix(vx: int, vy: int, wz: int) -> Wheels:
 
 
 def drive_wheels(vx: int, vy: int, wz: int, physics: Physics) -> Wheels:
-    """What the wheels actually do for a MOVE: the UNO's ``mecanumOutput``.
+    """The percentage each wheel is driven at for a MOVE: the UNO's ``mecanumOutput``.
 
     Each pin runs at the duty of the fastest wheel it drives, so every driven wheel on it
     turns at that speed. A wheel whose share is below a quarter of that coasts; exactly a
-    quarter is still driven. The duty's ``min_pwm`` offset is there to make speed follow
-    the percentage, so the simulator uses the percentage as the speed.
+    quarter is still driven. ``move_duties`` turns the percentages into PWM duties.
     """
     speeds = mix(vx, vy, wz)
     if physics.pwm_model == "ideal":
@@ -161,16 +167,49 @@ def wheel_bits(wheels: Wheels) -> int:
     return bits
 
 
-def bits_wheels(bits: int, pwm5: int, pwm6: int, *, pwm5_left: bool = False) -> Wheels:
-    """Wheel speeds for a raw TEST. ``pwm5_left`` says which wheels each pin drives; on
-    the real car that mapping is what TEST exists to find out."""
+def percent_to_pwm(percent: float, min_pwm: int) -> int:
+    """The UNO's ``percentToPwm``: 0 stays 0, 1..100 % map linearly onto min_pwm..255."""
+    p = abs(round(percent))
+    if p == 0:
+        return 0
+    if p >= 100:
+        return 255
+    return min_pwm + ((p - 1) * (255 - min_pwm) + 49) // 99
+
+
+def move_duties(wheels: Wheels, min_pwm: int) -> Wheels:
+    """Signed PWM duty per wheel for the percentages from ``drive_wheels``."""
+    fl, rl, fr, rr = (math.copysign(percent_to_pwm(w, min_pwm), w) if w else 0.0 for w in wheels)
+    return fl, rl, fr, rr
+
+
+def bits_duties(bits: int, pwm5: int, pwm6: int, *, pwm5_left: bool = False) -> Wheels:
+    """Signed PWM duty per wheel for a raw TEST. ``pwm5_left`` says which wheels each pin
+    drives; on the real car that mapping is what TEST exists to find out."""
     left, right = (pwm5, pwm6) if pwm5_left else (pwm6, pwm5)
 
     def one(plus: int, minus: int, pwm: int) -> float:
         d = (1 if bits >> plus & 1 else 0) - (1 if bits >> minus & 1 else 0)
-        return d * pwm / 255 * 100
+        return float(d * pwm)
 
     return one(7, 6, left), one(5, 4, left), one(1, 2, right), one(0, 3, right)
+
+
+def motor_speeds(duties: Wheels, physics: Physics) -> Wheels:
+    """Each wheel's speed in percent of its full speed, for signed PWM duties.
+
+    Proportional to the duty above ``zero_speed_pwm``; a duty below ``start_pwm`` leaves
+    the wheel still, because every move starts from a standstill.
+    """
+
+    def one(duty: float) -> float:
+        m = abs(duty)
+        if m < physics.start_pwm or m <= physics.zero_speed_pwm:
+            return 0.0
+        return math.copysign((m - physics.zero_speed_pwm) / (255 - physics.zero_speed_pwm) * 100, duty)
+
+    fl, rl, fr, rr = (one(d) for d in duties)
+    return fl, rl, fr, rr
 
 
 def body_velocity(wheels: Wheels) -> tuple[float, float, float]:

@@ -2,7 +2,8 @@
 
 Conventions follow protocol/uart.md: ``vx`` forward (+) / back (−), ``vy`` right (+) /
 left (−), ``wz`` clockwise (+) / counter-clockwise (−) seen from above, each in percent
-of full speed. The calibration values in ``CarSettings`` are rough speeds at 100 %.
+of full speed. The calibration values in ``CarSettings`` are the speeds at 100 %; how
+fast a wheel turns at a lower percentage follows the motor curve in ``speed_share``.
 """
 
 from __future__ import annotations
@@ -47,6 +48,15 @@ COAST_DIVISOR = 4
 
 Wheels = tuple[int, int, int, int]  # FL, RL, FR, RR in percent
 
+# The UNO turns a wheel's percentage into a PWM duty: 0 stays 0 and 1..100 % map
+# linearly onto min_pwm..255 (``percentToPwm`` in firmware/scout_uno/src/core/mecanum.cpp).
+# Measured on the AD176's floor, the motors then run at a speed proportional to the duty
+# above about 25: forward runs at 20, 30 and 50 % and turns at 20 and 50 %, with min_pwm
+# 90 and 110, all fit that within about 3 %. So speed is not proportional to the
+# percentage; 20 % is far more than a fifth of full speed. (From a standstill the motors
+# only start at a duty of about 100, which is what min_pwm is set for.)
+ZERO_SPEED_PWM = 25
+
 _SIDES = ((0, 1), (2, 3))  # left (FL, RL) and right (FR, RR)
 
 
@@ -88,7 +98,32 @@ def wheel_output(vx: int, vy: int, wz: int, layout: PwmLayout = "split") -> Whee
     return out[0], out[1], out[2], out[3]
 
 
-def body_velocity(wheels: Wheels) -> tuple[float, float, float]:
+def percent_to_pwm(percent: int, min_pwm: int) -> int:
+    """The UNO's ``percentToPwm`` for one wheel's speed (the sign is ignored)."""
+    p = abs(int(percent))
+    if p == 0:
+        return 0
+    if p >= 100:
+        return 255
+    return min_pwm + ((p - 1) * (255 - min_pwm) + 49) // 99
+
+
+def speed_share(percent: float, min_pwm: int) -> float:
+    """How much of its full speed (-1..1) a wheel driven at ``percent`` reaches."""
+    pwm = percent_to_pwm(round(percent), min_pwm)
+    if pwm == 0:
+        return 0.0
+    share = max(0.0, (pwm - ZERO_SPEED_PWM) / (255 - ZERO_SPEED_PWM))
+    return math.copysign(share, percent)
+
+
+def wheel_speeds(wheels: Wheels, min_pwm: int) -> tuple[float, float, float, float]:
+    """Each wheel's real speed in percent of its full speed, from its driven percentage."""
+    fl, rl, fr, rr = (100.0 * speed_share(w, min_pwm) for w in wheels)
+    return fl, rl, fr, rr
+
+
+def body_velocity(wheels: tuple[float, float, float, float]) -> tuple[float, float, float]:
     """Mecanum forward kinematics: (vx, vy, wz) in percent from (FL, RL, FR, RR)."""
     fl, rl, fr, rr = wheels
     return (fl + fr + rl + rr) / 4, (fl - fr - rl + rr) / 4, (fl - fr + rl - rr) / 4
@@ -111,7 +146,7 @@ def estimate(
     vx: int, vy: int, wz: int, ms: int, settings: CarSettings, *, layout: PwmLayout = "split"
 ) -> Estimate:
     """Dead reckoning for one move from what the wheels actually do on the UNO."""
-    bvx, bvy, bwz = body_velocity(wheel_output(vx, vy, wz, layout))
+    bvx, bvy, bwz = body_velocity(wheel_speeds(wheel_output(vx, vy, wz, layout), settings.min_pwm))
     t = ms / 100_000.0  # percent → fraction, and ms → s
     return Estimate(
         forward_cm=bvx * settings.forward_cm_per_s * t,
@@ -130,7 +165,7 @@ def split_ms(total_ms: int, max_ms: int = MAX_MOVE_MS) -> list[int]:
 
 def turn_rate(speed: int, settings: CarSettings) -> float:
     """Degrees per second when rotating in place at ``speed`` percent."""
-    return settings.turn_deg_per_s * speed / 100.0
+    return settings.turn_deg_per_s * speed_share(speed, settings.min_pwm)
 
 
 def turn_plan(
@@ -142,8 +177,8 @@ def turn_plan(
     instead (down to ``min_speed``) to keep the pulse near ``min_ms``.
     """
     total = degrees / turn_rate(speed, settings) * 1000.0
-    if total < min_ms and speed > min_speed:
-        speed = max(min_speed, math.ceil(speed * total / min_ms))
+    while total < min_ms and speed > min_speed:
+        speed -= 1
         total = degrees / turn_rate(speed, settings) * 1000.0
     return speed, split_ms(max(1, round(total)))
 
@@ -179,11 +214,12 @@ def orbit_step(
 
     ``mode="blend"``: one move with constant ``vy`` and ``wz``. A body moving sideways at
     ``v`` while turning at ``ω`` traces a circle of radius ``v/ω`` around a point straight
-    ahead, so choosing ``v/ω = R`` is an exact orbit. ``wz`` is rounded first so the
-    rotation is exact; the radius error from rounding ``vy`` is about 1-2 %. It needs
-    the wheels to run at different speeds, which the stock shield can't do yet: with the
-    shared PWM duty every running wheel turns at the fastest one's speed, so the small
-    rotation share cancels out (see ``wheel_output``).
+    ahead, so choosing ``v/ω = R`` is an exact orbit. Wheel speed doesn't follow the
+    percentage (``speed_share``), so the percentages within ``speed`` that come closest
+    to ``R`` are searched for, and the move is timed so the rotation is exact; the radius
+    error is about 1-2 %. It needs every wheel at its own speed, which the stock shield
+    can't do: with one duty per side the two wheels on a side run at the faster one's
+    speed (see ``wheel_output``).
 
     ``mode="split"`` (default): three pure moves the shield drives exactly. Rotate
     ``θ/2``, strafe the chord ``2R·sin(θ/2)``, rotate ``θ/2``. After the first rotation
@@ -202,8 +238,8 @@ def orbit_step(
     theta = math.radians(step_deg)
     side = -1 if direction == "left" else 1  # strafe sign
     spin = -side  # rotate the opposite way
-    strafe_rate = settings.strafe_cm_per_s * speed / 100.0
-    spin_rate = settings.turn_deg_per_s * speed / 100.0
+    strafe_rate = settings.strafe_cm_per_s * speed_share(speed, settings.min_pwm)
+    spin_rate = settings.turn_deg_per_s * speed_share(speed, settings.min_pwm)
     if mode == "split":
         half_s = (step_deg / 2.0) / spin_rate
         chord_s = 2.0 * radius_cm * math.sin(theta / 2.0) / strafe_rate
@@ -212,13 +248,25 @@ def orbit_step(
             + _timed(0, side * speed, 0, chord_s)
             + _timed(0, 0, spin * speed, half_s)
         )
-    # Blend: seconds each part would take at 100 %, then share ``speed`` between them.
-    a = radius_cm * theta / settings.strafe_cm_per_s
-    b = step_deg / settings.turn_deg_per_s
-    wz_pct = max(1, round(speed * b / (a + b)))
-    seconds = b * 100.0 / wz_pct
-    vy_pct = min(100 - wz_pct, max(1, round(a * 100.0 / seconds)))
-    return _timed(0, side * vy_pct, spin * wz_pct, seconds)
+    # Blend: the sideways speed per degree of rotation has to be R in radians.
+    target = radius_cm * theta / step_deg
+    best: tuple[float, int, int, float] | None = None
+    for wz_pct in range(1, speed):
+        for vy_pct in range(1, speed - wz_pct + 1):
+            _, bvy, bwz = body_velocity(
+                wheel_speeds(wheel_output(0, vy_pct, wz_pct, "ideal"), settings.min_pwm)
+            )
+            v = bvy / 100.0 * settings.strafe_cm_per_s
+            w = bwz / 100.0 * settings.turn_deg_per_s
+            if v <= 0 or w <= 0:
+                continue
+            error = abs(v / w - target)
+            if best is None or error < best[0]:
+                best = (error, vy_pct, wz_pct, w)
+    if best is None:  # speed is too low to share between strafing and turning
+        return orbit_step(radius_cm, step_deg, direction, settings, speed=speed, mode="split")
+    _, vy_pct, wz_pct, w = best
+    return _timed(0, side * vy_pct, spin * wz_pct, step_deg / w)
 
 
 def radius_correction(
@@ -237,6 +285,6 @@ def radius_correction(
     if abs(error) <= max(tolerance_cm, radius_cm * 0.08):
         return None
     error = max(-max_cm, min(max_cm, error))
-    rate = settings.forward_cm_per_s * speed / 100.0
+    rate = settings.forward_cm_per_s * speed_share(speed, settings.min_pwm)
     ms = max(1, round(abs(error) / rate * 1000))
     return PlannedMove(speed if error > 0 else -speed, 0, 0, min(ms, MAX_MOVE_MS))

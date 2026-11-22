@@ -41,6 +41,32 @@ Four geared DC motors with mecanum wheels: M1 front-left, M2 rear-left, M3 front
 M4 rear-right. The shift-register bit map and the mixing formula are in
 [protocol/uart.md](../protocol/uart.md).
 
+### Speed on the floor
+
+Measured on a hard floor with a tape measure, driving through the server's `move` and
+`turn` tools:
+
+- From a standstill a motor only starts at a PWM duty of about 100. At 60, 75 and 90
+  the wheels hummed and the car stayed put; at 105 it moved 14 cm in 1 s. `min_pwm` is
+  set to 110 on the admin page (the firmware default is 90).
+- Once it runs, a motor's speed is proportional to its duty above about 25 (out of 255).
+  The firmware maps 1..100 % onto `min_pwm`..255, so speed is not proportional to the
+  percentage: 20 % is far more than a fifth of full speed. The server models this
+  (`speed_share` in `server/src/scout/robot/motion.py`).
+
+| Move | `min_pwm` | Measured | Model |
+|---|---|---|---|
+| Forward 1.5 s at 20 % | 90 | 28.2 cm (18.8 cm/s) | 18.6 cm/s |
+| Forward at 30 %, the obstacle-stop run | 90 | about 54 cm in 2.5 s (21.5 cm/s) | 21.6 cm/s |
+| Forward 1 s at 50 % | 90 | 28 cm | 28.1 cm/s |
+| Turn 1 s at 50 % | 90 | 132° | 132°/s |
+| Turn 0.85 s at 20 % | 110 | 85° (100°/s) | 101°/s |
+| Sideways 1 s at 50 % | 90 | rear wheels 25 cm, front 23.5 cm | 24.3 cm/s |
+
+The model column uses 44 cm/s forward, 206°/s turning and 38 cm/s sideways at 100 %,
+the calibration that fits these runs. Sideways moves yaw slightly counter-clockwise.
+A forward move at 30 % from 65 cm stopped at 14 cm with the obstacle distance at 15 cm.
+
 ## ESP32-CAM pins
 
 | GPIO | Use |
