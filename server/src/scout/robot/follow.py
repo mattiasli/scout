@@ -49,7 +49,7 @@ choice by position alone).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from scout.contracts import CarSettings
 from scout.robot.detector import Detection
@@ -118,6 +118,19 @@ class FollowStep:
     @property
     def acts(self) -> bool:
         return self.moves or self.tilt is not None
+
+
+def keep_distance(tuning: FollowTuning, cm: float) -> FollowTuning:
+    """``tuning`` set to keep about ``cm`` from the target instead. A box's size goes as one
+    over the distance, so the size targets scale from the measured ones."""
+    t = tuning
+    return replace(
+        t,
+        target_width=t.target_width * t.target_width_cm / cm,
+        target_width_cm=cm,
+        target_height=t.target_height * t.target_height_cm / cm,
+        target_height_cm=cm,
+    )
 
 
 def start_tilt(label: str, tuning: FollowTuning | None = None) -> int:

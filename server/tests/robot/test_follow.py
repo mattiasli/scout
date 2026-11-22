@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -91,6 +92,19 @@ async def test_follow_approaches_the_cat_and_stops_on_request(harness: Harness) 
     await wait_for(lambda: any(m.get("t") == "stream" and m.get("on") is False for m in car.received))
     assert cat_distance(car.world) > 11 + 12  # never ran into it
     assert harness.robot._detector is None  # the model is dropped once nobody follows
+
+
+async def test_follow_keeps_the_distance_asked_for(harness: Harness) -> None:
+    car = await harness.connect(world=cat_world())
+    start = cat_distance(car.world)  # about 130 cm
+    result = await harness.robot.follow("car-1", target="cat", seconds=60, distance_cm=200)
+    assert "about 200 cm away" in result.data["summary"]
+    assert follow_state(harness)["distance_cm"] == 200
+    # It backs away, where without distance_cm it would close in (see the test above).
+    await wait_for(lambda: cat_distance(car.world) > start + 10, within=15)
+    status = (await harness.robot.status("car-1")).data
+    assert status["follow"]["distance_cm"] == 200
+    await harness.robot.stop("car-1")
 
 
 async def test_follow_ends_when_time_is_up(harness: Harness) -> None:
@@ -383,6 +397,13 @@ def test_when_follow_holds_back_and_for_how_long() -> None:
     # A look-alike close by: a reason to hold unless the AI picked this one with both in view.
     assert check(None, _sighting(unsure=True), 0.8) is not None
     assert check(None, _sighting(unsure=True), 0.8, confirmed=True) is None
+    # Found again after someone who looks alike has been in view: only a pick settles it.
+    other = check(None, _sighting(), 0.8, found_again=True, lookalikes=True)
+    assert other is not None and other.needs_pick
+    assert other.why.endswith("another person that looks alike has been in view, so it needs a pick to go on")
+    for _ in range(5):
+        other = check(other, _sighting(0.95), 0.85)
+    assert other is not None
 
 
 # The person follow locks on to, then nobody, then a coat rack where the person was that
@@ -420,7 +441,7 @@ async def test_follow_holds_back_until_it_is_sure_or_the_ai_confirms(
     assert "call follow with pick set to 1 to confirm" in view.data["summary"]
     # The AI looks and confirms it: follow drives again.
     confirmed = await harness.robot.follow("car-1", pick=1, seconds=30)
-    assert "isn't sure" not in confirmed.data["summary"]
+    assert "It isn't sure yet" not in confirmed.data["summary"]
 
     def drove() -> bool:
         step = follow_state(harness).get("last_step")
@@ -428,6 +449,77 @@ async def test_follow_holds_back_until_it_is_sure_or_the_ai_confirms(
 
     await wait_for(drove, within=4)
     assert not follow_state(harness).get("checking")
+    await harness.robot.stop("car-1")
+
+
+@pytest.mark.detector.with_args(_flaky_cat)
+async def test_follow_view_waits_for_something_to_check(harness: Harness) -> None:
+    await harness.connect()
+    await harness.robot.follow("car-1", seconds=30)
+    started = time.monotonic()
+    view = await harness.robot.follow_view("car-1", wait_s=10)
+    assert time.monotonic() - started < 6  # woke when it lost the cat, not after 10 s
+    assert view.data["woke_because"] == "it lost sight of the cat and is looking for it"
+    assert view.data["summary"].startswith("Woke because it lost sight of the cat")
+    assert "call follow_view with wait_s 10" in view.data["summary"]
+    await harness.robot.stop("car-1")
+    await wait_for(lambda: follow_state(harness).get("state") == "ended")
+    ended = await harness.robot.follow_view("car-1", wait_s=10)  # over: no waiting
+    assert ended.data["result"] == "ended" and "woke_because" not in ended.data
+    assert ended.data["follow"]["last_event"] == "follow ended: stop was requested"
+
+
+async def test_follow_view_says_when_nothing_happened(harness: Harness) -> None:
+    await harness.connect(world=cat_world())
+    started = await harness.robot.follow("car-1", seconds=30)
+    assert "call follow_view with wait_s 10 again and again" in started.data["summary"]
+    view = await harness.robot.follow_view("car-1", wait_s=1)
+    assert view.data["woke_because"] is None
+    assert view.data["summary"].startswith("Nothing new in 1 s. ")
+    await harness.robot.stop("car-1")
+
+
+# Two people dressed alike, side by side. The one picked (on the left) goes out of sight
+# and only the other is left.
+def _two_then_the_other() -> ScriptedDetector:
+    seen = {"n": 0}
+    left = Detection("person", 0.85, 0.20, 0.2, 0.36, 0.9)
+    right = Detection("person", 0.85, 0.60, 0.2, 0.76, 0.9)
+
+    def script(_jpeg: bytes) -> list[Detection]:
+        seen["n"] += 1  # the first call is find's
+        if seen["n"] <= 4:
+            return [left, right]
+        if seen["n"] <= 7:
+            return []
+        return [right]
+
+    return ScriptedDetector(script)
+
+
+@pytest.mark.detector.with_args(_two_then_the_other)
+async def test_after_a_look_alike_has_been_seen_only_a_pick_lets_it_drive_again(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scout.robot.robot.describe", lambda _image, _det: np.full(60, 1 / 20))
+    await harness.connect(world=cat_world())
+    await harness.robot.find("car-1", target="person")
+    await harness.robot.follow("car-1", pick=1, seconds=30)
+    woke = []
+    while not woke or woke[-1] != "it lost sight of the person and is looking for it":
+        view = await harness.robot.follow_view("car-1", wait_s=10)
+        woke.append(view.data["woke_because"])
+        assert len(woke) < 4, woke
+    # Before that it may have said both were in view, alike.
+    assert set(woke[:-1]) <= {"another person in view looks almost as alike as the one it follows"}
+    await wait_for(lambda: bool(follow_state(harness).get("checking")), within=6)
+    assert str(follow_state(harness)["checking"]).endswith("so it needs a pick to go on")
+    assert str(follow_state(harness)["event"]).startswith("follow is holding back from driving")
+    for _ in range(8):  # however sure of it, it doesn't drive towards the other one
+        step = follow_state(harness)["last_step"]
+        assert isinstance(step, dict) and step["vx"] == 0, step
+        await asyncio.sleep(0.2)
+    assert follow_state(harness).get("checking")
     await harness.robot.stop("car-1")
 
 

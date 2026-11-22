@@ -164,6 +164,12 @@ class RobotAPI(Protocol):
         self, car_id: str, *, target: str | None = None, size: ImageSize = "medium"
     ) -> ActionResult: ...
     async def follow(
-        self, car_id: str, *, target: str = "cat", seconds: int = 60, pick: int | None = None
+        self,
+        car_id: str,
+        *,
+        target: str = "cat",
+        seconds: int = 60,
+        pick: int | None = None,
+        distance_cm: int | None = None,
     ) -> ActionResult: ...
-    async def follow_view(self, car_id: str) -> ActionResult: ...
+    async def follow_view(self, car_id: str, *, wait_s: int = 0) -> ActionResult: ...

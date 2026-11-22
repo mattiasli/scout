@@ -220,12 +220,26 @@ class FakeRobot:
         return await self._act("find", images=1, car_id=car_id, target=target, size=size)
 
     async def follow(
-        self, car_id: str, *, target: str = "cat", seconds: int = 60, pick: int | None = None
+        self,
+        car_id: str,
+        *,
+        target: str = "cat",
+        seconds: int = 60,
+        pick: int | None = None,
+        distance_cm: int | None = None,
     ) -> ActionResult:
-        return await self._act("follow", images=1, car_id=car_id, target=target, seconds=seconds, pick=pick)
+        return await self._act(
+            "follow",
+            images=1,
+            car_id=car_id,
+            target=target,
+            seconds=seconds,
+            pick=pick,
+            distance_cm=distance_cm,
+        )
 
-    async def follow_view(self, car_id: str) -> ActionResult:
-        return await self._act("follow_view", images=2, car_id=car_id)
+    async def follow_view(self, car_id: str, *, wait_s: int = 0) -> ActionResult:
+        return await self._act("follow_view", images=2, car_id=car_id, wait_s=wait_s)
 
 
 class FakeGitHub:
