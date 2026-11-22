@@ -75,6 +75,16 @@ class RobotConfig:
     follow_search_deg: float = 360.0  # how far it turns looking before it gives up
     follow_frame_timeout_s: float = 5.0  # no picture from the camera for this long ends it
     follow_match_min: float = 0.45  # how alike a candidate must look to be the target
+    # How many times bigger or smaller than its last sighting a candidate may be and still
+    # be the target (tracker.size_change). The allowance is multiplied by follow_size_change_growth for each
+    # second it has been out of sight, up to follow_size_change_max. On the floor, a dark chair 4 times
+    # narrower than the person followed matched their dark clothes at 0.95.
+    follow_size_change: float = 2.5
+    follow_size_change_growth: float = 1.1
+    follow_size_change_max: float = 4.0
+    # Sure sightings in a row (not unsure, matching at least LEARN_MATCH) before follow
+    # updates the target's look from them, so one wrong pick doesn't teach it a new look.
+    follow_learn_after: int = 3
     follow_start_wait_s: float = 4.0  # follow returns once it has locked on, or after this
     follow_pick_valid_s: float = 120.0  # how long find's or follow_view's numbers stay valid
     find_min_score: float = 0.35
