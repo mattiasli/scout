@@ -50,12 +50,23 @@ Wheels = tuple[int, int, int, int]  # FL, RL, FR, RR in percent
 
 # The UNO turns a wheel's percentage into a PWM duty: 0 stays 0 and 1..100 % map
 # linearly onto min_pwm..255 (``percentToPwm`` in firmware/scout_uno/src/core/mecanum.cpp).
-# Measured on the AD176's floor, the motors then run at a speed proportional to the duty
-# above about 25: forward runs at 20, 30 and 50 % and turns at 20 and 50 %, with min_pwm
-# 90 and 110, all fit that within about 3 %. So speed is not proportional to the
-# percentage; 20 % is far more than a fifth of full speed. (From a standstill the motors
-# only start at a duty of about 100, which is what min_pwm is set for.)
-ZERO_SPEED_PWM = 25
+# How fast a motor then runs was measured on the AD176's floor (docs/hardware.md, "Speed
+# on the floor"): turning speeds in degrees per second at four duties. The curve isn't a
+# straight line: it sags around 80 % and picks up again at 255, where the pin stays on.
+# So the measurements are used as they are, with straight lines between them and down to
+# no speed at a duty of about 25 (where the low-speed forward and turning runs point).
+# Forward and sideways runs at lower duties fit the same shape within about 2 %. From a
+# standstill the motors only start at a duty of about 100, which is what min_pwm is for.
+MEASURED_TURN_RATES: tuple[tuple[int, float], ...] = (
+    (25, 0.0),
+    (138, 99.4),  # 20 % at min_pwm 110: 85° in 0.85 s, 88° in 0.89 s (twice)
+    (172, 132.0),  # 50 % at min_pwm 90: 132° in 1 s
+    (226, 166.5),  # 80 % at min_pwm 110: 84° in 0.5 s, 165° in 1 s
+    (255, 202.0),  # 100 %: 202° in 1 s
+)
+SPEED_CURVE: tuple[tuple[int, float], ...] = tuple(
+    (duty, rate / MEASURED_TURN_RATES[-1][1]) for duty, rate in MEASURED_TURN_RATES
+)
 
 _SIDES = ((0, 1), (2, 3))  # left (FL, RL) and right (FR, RR)
 
@@ -108,13 +119,26 @@ def percent_to_pwm(percent: int, min_pwm: int) -> int:
     return min_pwm + ((p - 1) * (255 - min_pwm) + 49) // 99
 
 
+def duty_share(duty: float) -> float:
+    """How much of its full speed (0..1) a running motor reaches at a PWM duty (0..255),
+    from ``SPEED_CURVE``."""
+    d = abs(duty)
+    (d0, s0) = SPEED_CURVE[0]
+    if d <= d0:
+        return 0.0
+    for d1, s1 in SPEED_CURVE[1:]:
+        if d <= d1:
+            return s0 + (s1 - s0) * (d - d0) / (d1 - d0)
+        d0, s0 = d1, s1
+    return 1.0
+
+
 def speed_share(percent: float, min_pwm: int) -> float:
     """How much of its full speed (-1..1) a wheel driven at ``percent`` reaches."""
     pwm = percent_to_pwm(round(percent), min_pwm)
     if pwm == 0:
         return 0.0
-    share = max(0.0, (pwm - ZERO_SPEED_PWM) / (255 - ZERO_SPEED_PWM))
-    return math.copysign(share, percent)
+    return math.copysign(duty_share(pwm), percent)
 
 
 def wheel_speeds(wheels: Wheels, min_pwm: int) -> tuple[float, float, float, float]:
@@ -191,6 +215,10 @@ class PlannedMove:
     ms: int
 
 
+BLEND_SLACK = 5  # percent the blend orbit's fastest wheel may run below ``speed``
+BLEND_TOLERANCE = 0.03  # a blend that misses the radius by more falls back to the split plan
+
+
 def _timed(vx: int, vy: int, wz: int, seconds: float) -> list[PlannedMove]:
     return [PlannedMove(vx, vy, wz, ms) for ms in split_ms(max(1, round(seconds * 1000)))]
 
@@ -215,11 +243,12 @@ def orbit_step(
     ``mode="blend"``: one move with constant ``vy`` and ``wz``. A body moving sideways at
     ``v`` while turning at ``ω`` traces a circle of radius ``v/ω`` around a point straight
     ahead, so choosing ``v/ω = R`` is an exact orbit. Wheel speed doesn't follow the
-    percentage (``speed_share``), so the percentages within ``speed`` that come closest
-    to ``R`` are searched for, and the move is timed so the rotation is exact; the radius
-    error is about 1-2 %. It needs every wheel at its own speed, which the stock shield
-    can't do: with one duty per side the two wheels on a side run at the faster one's
-    speed (see ``wheel_output``).
+    percentage (``speed_share``), so the pair whose fastest wheel runs at ``speed`` or up
+    to ``BLEND_SLACK`` percent below it that comes closest to ``R`` is searched for, and
+    the move is timed so the rotation is exact; the radius error is 3 % at most. If no
+    pair gets that close (at low speeds), it uses the split plan instead. It needs every
+    wheel at its own speed, which the stock shield can't do: with one duty per side the
+    two wheels on a side run at the faster one's speed (see ``wheel_output``).
 
     ``mode="split"`` (default): three pure moves the shield drives exactly. Rotate
     ``θ/2``, strafe the chord ``2R·sin(θ/2)``, rotate ``θ/2``. After the first rotation
@@ -250,9 +279,12 @@ def orbit_step(
         )
     # Blend: the sideways speed per degree of rotation has to be R in radians.
     target = radius_cm * theta / step_deg
+    # The fastest wheel runs at vy + wz. Keep that within a few percent of ``speed``, so
+    # the move doesn't crawl (a slow pair can match the ratio as well as a fast one).
     best: tuple[float, int, int, float] | None = None
-    for wz_pct in range(1, speed):
-        for vy_pct in range(1, speed - wz_pct + 1):
+    for fastest in range(speed, max(1, speed - BLEND_SLACK) - 1, -1):
+        for wz_pct in range(1, fastest):
+            vy_pct = fastest - wz_pct
             _, bvy, bwz = body_velocity(
                 wheel_speeds(wheel_output(0, vy_pct, wz_pct, "ideal"), settings.min_pwm)
             )
@@ -263,7 +295,9 @@ def orbit_step(
             error = abs(v / w - target)
             if best is None or error < best[0]:
                 best = (error, vy_pct, wz_pct, w)
-    if best is None:  # speed is too low to share between strafing and turning
+    if best is None or best[0] > BLEND_TOLERANCE * target:
+        # Too slow to share between strafing and turning: every running wheel turns at
+        # least as fast as min_pwm drives it, which limits how tight the circle can be.
         return orbit_step(radius_cm, step_deg, direction, settings, speed=speed, mode="split")
     _, vy_pct, wz_pct, w = best
     return _timed(0, side * vy_pct, spin * wz_pct, step_deg / w)

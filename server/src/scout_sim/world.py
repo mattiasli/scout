@@ -20,6 +20,8 @@ from typing import Literal
 
 import numpy as np
 
+from scout.robot.motion import duty_share
+
 Wheels = tuple[float, float, float, float]  # FL, RL, FR, RR in percent
 ZERO: Wheels = (0.0, 0.0, 0.0, 0.0)
 INF = math.inf
@@ -107,10 +109,9 @@ class Physics:
     pwm_model: PwmModel = "split"
     coast_divisor: int = 4  # kCoastDivisor: 4 = 25 %
     pwm5_left: bool = False  # the AD176's wiring: D5 drives the right wheels, D6 the left ones
-    # The motors, as measured on the AD176: speed is proportional to the PWM duty above
-    # zero_speed_pwm, and from a standstill a motor only starts at start_pwm or more
-    # (below that it hums and stays put).
-    zero_speed_pwm: float = 25.0
+    # The motors, as measured on the AD176: speed follows the server's measured curve
+    # (``scout.robot.motion.SPEED_CURVE``), and from a standstill a motor only starts at
+    # start_pwm or more (below that it hums and stays put).
     start_pwm: int = 100
     car_radius: float = 12.0  # for collisions
     sensor_offset: float = 10.0  # ultrasonic and camera, ahead of the turning centre
@@ -198,15 +199,14 @@ def bits_duties(bits: int, pwm5: int, pwm6: int, *, pwm5_left: bool = False) -> 
 def motor_speeds(duties: Wheels, physics: Physics) -> Wheels:
     """Each wheel's speed in percent of its full speed, for signed PWM duties.
 
-    Proportional to the duty above ``zero_speed_pwm``; a duty below ``start_pwm`` leaves
-    the wheel still, because every move starts from a standstill.
+    The measured curve (``duty_share``); a duty below ``start_pwm`` leaves the wheel
+    still, because every move starts from a standstill.
     """
 
     def one(duty: float) -> float:
-        m = abs(duty)
-        if m < physics.start_pwm or m <= physics.zero_speed_pwm:
+        if abs(duty) < physics.start_pwm:
             return 0.0
-        return math.copysign((m - physics.zero_speed_pwm) / (255 - physics.zero_speed_pwm) * 100, duty)
+        return math.copysign(duty_share(duty) * 100, duty)
 
     fl, rl, fr, rr = (one(d) for d in duties)
     return fl, rl, fr, rr
