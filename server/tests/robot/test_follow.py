@@ -35,10 +35,7 @@ class ScriptedDetector:
 
 
 def cat_world() -> World:
-    # Follow's smallest turn (25 %) runs the motors at about half speed. At the harness's
-    # 720°/s that swings the camera ~75° between frames and loses the cat; 360°/s keeps
-    # each step in view (the real car turns ~107°/s at 25 % with min_pwm 110).
-    world = World.default(seed=2, cat=False, physics=fast_physics(turn_deg_per_s=360.0))
+    world = World.default(seed=2, cat=False, physics=fast_physics())
     world.place_car(110, 150, 0)
     world.cat = Cat(x=240, y=172, heading=math.pi / 2, wander=False)
     return world
@@ -76,7 +73,7 @@ async def test_follow_approaches_the_cat_and_stops_on_request(harness: Harness) 
     assert status["follow"]["moves"] > 0
     assert 0 <= status["follow"]["last_target"]["centre"] <= 1
     assert 0 < status["follow"]["last_target"]["height"] <= 1
-    assert set(status["follow"]["last_command"]) == {"vx", "vy", "wz"}
+    assert set(status["follow"]["last_step"]) == {"vx", "wz", "ms", "why"}
     assert 40 < status["follow"]["seconds_left"] <= 60
     assert "following the cat" in status["summary"]
     streams = [m for m in car.received if m.get("t") == "stream"]

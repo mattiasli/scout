@@ -70,6 +70,12 @@ class RobotConfig:
     follow_quality: int = 12
     follow_stream_secs: int = 10
     follow_stream_resend_s: float = 6.0
-    follow_lost_s: float = 3.0
-    follow_move_ms: int = 350
+    follow_lost_s: float = 3.0  # of looking: the time spent moving doesn't count
+    # After each step, how long to wait once the move has ended before looking again: the
+    # car coasting to a stop, plus the frame's way from the camera to the server.
+    follow_settle_s: float = 0.3
     follow_min_score: float = 0.35
+    # The camera's horizontal field of view, for turning a box's offset into an angle.
+    # Roughly the OV3660 with the stock lens (the simulator uses the same); not measured
+    # on the car yet. Follow turns 60 % of the angle per step, so a fair error is fine.
+    camera_hfov_deg: float = 66.0
