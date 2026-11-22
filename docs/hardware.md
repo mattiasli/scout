@@ -49,23 +49,30 @@ Measured on a hard floor with a tape measure, driving through the server's `move
 - From a standstill a motor only starts at a PWM duty of about 100. At 60, 75 and 90
   the wheels hummed and the car stayed put; at 105 it moved 14 cm in 1 s. `min_pwm` is
   set to 110 on the admin page (the firmware default is 90).
-- Once it runs, a motor's speed is proportional to its duty above about 25 (out of 255).
-  The firmware maps 1..100 % onto `min_pwm`..255, so speed is not proportional to the
-  percentage: 20 % is far more than a fifth of full speed. The server models this
-  (`speed_share` in `server/src/scout/robot/motion.py`).
+- Once it runs, a motor's speed grows with its duty from about 25 (out of 255), but not
+  in a straight line: the turning speed sags around 80 % and picks up again at 100 %,
+  where the pin stays on all the time. The firmware maps 1..100 % onto `min_pwm`..255,
+  so speed isn't proportional to the percentage either: 20 % is far more than a fifth
+  of full speed. The server uses the measured turning speeds as a table, with straight
+  lines between them (`MEASURED_TURN_RATES` in `server/src/scout/robot/motion.py`);
+  forward and sideways use the same shape.
 
-| Move | `min_pwm` | Measured | Model |
-|---|---|---|---|
-| Forward 1.5 s at 20 % | 90 | 28.2 cm (18.8 cm/s) | 18.6 cm/s |
-| Forward at 30 %, the obstacle-stop run | 90 | about 54 cm in 2.5 s (21.5 cm/s) | 21.6 cm/s |
-| Forward 1 s at 50 % | 90 | 28 cm | 28.1 cm/s |
-| Turn 1 s at 50 % | 90 | 132° | 132°/s |
-| Turn 0.85 s at 20 % | 110 | 85° (100°/s) | 101°/s |
-| Sideways 1 s at 50 % | 90 | rear wheels 25 cm, front 23.5 cm | 24.3 cm/s |
+| Move | `min_pwm` | Duty | Measured | Model |
+|---|---|---|---|---|
+| Forward 1.5 s at 20 % | 90 | 122 | 28.2 cm (18.8 cm/s) | 18.4 cm/s |
+| Forward at 30 %, the obstacle-stop run | 90 | 138 | about 54 cm in 2.5 s (21.5 cm/s) | 21.4 cm/s |
+| Forward 1 s at 50 % | 90 | 172 | 28 cm | 28.4 cm/s |
+| Sideways 1 s at 50 % | 90 | 172 | rear wheels 25 cm, front 23.5 cm | 24.2 cm/s |
+| Turn at 20 % | 110 | 138 | 85° in 0.85 s, 88° in 0.89 s (twice) | 99.4°/s |
+| Turn 1 s at 50 % | 90 | 172 | 132° | 132°/s |
+| Turn at 80 % | 110 | 226 | 84° in 0.5 s, 165° in 1 s | 166.5°/s |
+| Turn 1 s at 100 % | 110 | 255 | 202° | 202°/s |
 
-The model column uses 44 cm/s forward, 206°/s turning and 38 cm/s sideways at 100 %,
-the calibration that fits these runs. Sideways moves yaw slightly counter-clockwise.
-A forward move at 30 % from 65 cm stopped at 14 cm with the obstacle distance at 15 cm.
+The model column uses the calibration that fits these runs: 202°/s turning, 43.5 cm/s
+forward and 37 cm/s sideways at 100 %. The turns are the table's own points. With a
+straight line through 25 instead, the 80 % turns came out 8 % short. Sideways moves yaw
+slightly counter-clockwise. A forward move at 30 % from 65 cm stopped at 14 cm with the
+obstacle distance at 15 cm.
 
 ## ESP32-CAM pins
 

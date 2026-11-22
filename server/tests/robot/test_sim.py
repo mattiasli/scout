@@ -21,7 +21,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request, Response
 
-from scout.robot.motion import PwmLayout, direction_velocity, speed_share, wheel_output
+from scout.robot.motion import PwmLayout, direction_velocity, duty_share, speed_share, wheel_output
 from scout.robot.motion import percent_to_pwm as server_percent_to_pwm
 from scout_sim import Cat, Disc, Faults, Physics, SimCar, SimCatDetector, SimConfig, World
 from scout_sim.__main__ import main
@@ -149,8 +149,10 @@ def test_motors_follow_the_measured_curve() -> None:
     # firmware percentToPwm: 1 % is min_pwm, 100 % is 255, linear in between.
     assert [percent_to_pwm(x, 90) for x in (0, 1, 20, 50, 99, 100)] == [0, 90, 122, 172, 253, 255]
     assert move_duties((50, -50, 0, 20), 110) == (182, -182, 0, 138)
-    # Speed is proportional to the duty above 25; below 100 a motor doesn't start.
-    assert motor_speeds((255, -140, 99, 100), p) == pytest.approx((100, -50, 0, 75 / 230 * 100))
+    # The measured curve; below 100 a motor doesn't start.
+    assert motor_speeds((255, -140, 99, 100), p) == pytest.approx(
+        (100, -100 * duty_share(140), 0, 100 * duty_share(100))
+    )
     # The server's estimates use the same curve (it leaves out the stall).
     for min_pwm in (0, 90, 110, 255):
         for x in range(101):

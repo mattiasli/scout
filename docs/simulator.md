@@ -93,8 +93,9 @@ runs all four at 70 %, so the car goes straight, and `vx 40, wz 30` (70 and 10 %
 leaves the slow side coasting, so the car pivots.
 
 Each wheel's percentage becomes a PWM duty the way the firmware maps it (1..100 % onto
-`min_pwm`..255), and the motor turns at a speed proportional to the duty above 25
-(`Physics.zero_speed_pwm`), as measured on the AD176. A duty below 100
+`min_pwm`..255), and the motor turns at the speed the server's measured curve gives for
+that duty (`MEASURED_TURN_RATES` in `scout/robot/motion.py`, from the AD176's floor
+runs). A duty below 100
 (`Physics.start_pwm`) leaves the wheel still, because every move starts from a
 standstill and the real motors only hum there. The server's estimates use the same
 curve, without the stall.

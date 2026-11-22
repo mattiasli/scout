@@ -45,20 +45,21 @@ async def test_move_forward_completes_with_estimates(harness: Harness) -> None:
     assert data["result"] == "completed"
     assert data["reason"] == "time"
     assert data["ms"] == 500
-    # 120 cm/s × 0.71 × 0.5 s: 60 % is duty 188, which turns the motors at (188 − 25)/230
-    # of full speed.
-    assert data["estimated_cm"] == pytest.approx(42.5)
+    # 120 cm/s × 0.70 × 0.5 s: 60 % is duty 188, where the motors run at 70 % of full
+    # speed (``motion.SPEED_CURVE``).
+    assert data["estimated_cm"] == pytest.approx(42.2, abs=0.1)
     assert data["distance_before_cm"] == pytest.approx(280, abs=3)
-    assert data["distance_after_cm"] == pytest.approx(237.5, abs=4)
-    assert car.world.car.x - x0 == pytest.approx(42.5, abs=3)
+    assert data["distance_after_cm"] == pytest.approx(237.8, abs=4)
+    assert car.world.car.x - x0 == pytest.approx(42.2, abs=3)
     assert "completed" in data["summary"]
     assert result.images == []
 
 
 @pytest.mark.parametrize(
     ("direction", "forward", "right"),
-    # Straight: 60 % runs the wheels at 71 %. Diagonal: two wheels at 84 % (88 %), the others still.
-    [("left", 0.0, -35.4), ("back", -42.5, 0.0), ("forward_right", 26.5, 22.1), ("back_left", -26.5, -22.1)],
+    # Straight: 60 % runs the wheels at 70 % of full speed. Diagonal: two wheels at 84 %
+    # (which runs them at about 84 %), the others still.
+    [("left", 0.0, -35.2), ("back", -42.2, 0.0), ("forward_right", 25.1, 20.9), ("back_left", -25.1, -20.9)],
 )
 async def test_move_directions_match_the_car(
     harness: Harness, direction: str, forward: float, right: float
@@ -90,8 +91,8 @@ async def test_turn_right_and_left(harness: Harness) -> None:
 async def test_drive_raw_and_validation(harness: Harness) -> None:
     car = await harness.connect()
     result = await harness.robot.drive("car-1", vx=0, vy=0, wz=-50, ms=200)
-    assert result.data["estimated"]["clockwise_deg"] == pytest.approx(-92.0)  # 720°/s × 147/230 × 0.2 s
-    assert angle_diff(heading_deg(car.world), 92) < 3
+    assert result.data["estimated"]["clockwise_deg"] == pytest.approx(-94.1)  # 720°/s × 132/202 × 0.2 s
+    assert angle_diff(heading_deg(car.world), 94) < 3
     for kwargs in ({"vx": 101, "vy": 0, "wz": 0, "ms": 500}, {"vx": 0, "vy": 0, "wz": 0, "ms": 50}):
         with pytest.raises(InvalidRequest):
             await harness.robot.drive("car-1", **kwargs)
