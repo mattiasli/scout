@@ -182,8 +182,14 @@ class ToolService:
                 return await robot.capture_orbit(
                     car_id, user_id=user.id, photos=a["photos"], direction=a["direction"]
                 )
+            case "find":
+                return await robot.find(car_id, target=a.get("target"), size=a["size"])
             case "follow":
-                return await robot.follow(car_id, target=a["target"], seconds=a["seconds"])
+                return await robot.follow(
+                    car_id, target=a["target"], seconds=a["seconds"], pick=a.get("pick")
+                )
+            case "follow_view":
+                return await robot.follow_view(car_id)
         raise Refused(f"Scout has no tool called {spec.name!r}.")  # pragma: no cover
 
     # ----------------------------------------------------------------- results

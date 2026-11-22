@@ -216,8 +216,16 @@ class FakeRobot:
         write_capture(self.data_dir, capture_id, user_id, photos=photos)
         return ActionResult(data=result.data, images=[JPEG, JPEG], capture_id=capture_id)
 
-    async def follow(self, car_id: str, *, target: str = "cat", seconds: int = 60) -> ActionResult:
-        return await self._act("follow", car_id=car_id, target=target, seconds=seconds)
+    async def find(self, car_id: str, *, target: str | None = None, size: str = "medium") -> ActionResult:
+        return await self._act("find", images=1, car_id=car_id, target=target, size=size)
+
+    async def follow(
+        self, car_id: str, *, target: str = "cat", seconds: int = 60, pick: int | None = None
+    ) -> ActionResult:
+        return await self._act("follow", images=1, car_id=car_id, target=target, seconds=seconds, pick=pick)
+
+    async def follow_view(self, car_id: str) -> ActionResult:
+        return await self._act("follow_view", images=2, car_id=car_id)
 
 
 class FakeGitHub:

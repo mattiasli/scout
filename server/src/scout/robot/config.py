@@ -70,7 +70,15 @@ class RobotConfig:
     follow_quality: int = 12
     follow_stream_secs: int = 10
     follow_stream_resend_s: float = 6.0
-    follow_lost_s: float = 3.0  # of looking: the time spent moving doesn't count
+    # Frames in a row without the target, all taken at a standstill, before it searches.
+    follow_misses: int = 2
+    follow_search_deg: float = 360.0  # how far it turns looking before it gives up
+    follow_frame_timeout_s: float = 5.0  # no picture from the camera for this long ends it
+    follow_match_min: float = 0.45  # how alike a candidate must look to be the target
+    follow_start_wait_s: float = 4.0  # follow returns once it has locked on, or after this
+    follow_pick_valid_s: float = 120.0  # how long find's or follow_view's numbers stay valid
+    find_min_score: float = 0.35
+    detector_linger_s: float = 120.0  # the model stays loaded this long after its last use
     # After each step, how long to wait once the move has ended before looking again: the
     # car coasting to a stop, plus the frame's way from the camera to the server.
     follow_settle_s: float = 0.3

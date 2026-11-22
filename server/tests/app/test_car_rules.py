@@ -268,6 +268,7 @@ async def test_arguments_and_defaults_reach_the_robot(world: World) -> None:
     await world.call(world.alice, "look_around", {})
     await world.call(world.alice, "capture_orbit", {"photos": 8})
     await world.call(world.alice, "follow", {"target": "dog"})
+    await world.call(world.alice, "find", {})
     calls = dict(world.robot.calls)
     assert calls["turn"] == {
         "car_id": "scout-1",
@@ -284,7 +285,13 @@ async def test_arguments_and_defaults_reach_the_robot(world: World) -> None:
         "photos": 8,
         "direction": "left",
     }
-    assert calls["follow"] == {"car_id": "scout-1", "target": "dog", "seconds": 60}
+    assert calls["follow"] == {"car_id": "scout-1", "target": "dog", "seconds": 60, "pick": None}
+    assert calls["find"] == {"car_id": "scout-1", "target": None, "size": "medium"}
+    await world.call(world.alice, "follow", {"pick": 3})
+    await world.call(world.alice, "follow_view", {})
+    calls = dict(world.robot.calls)
+    assert calls["follow"] == {"car_id": "scout-1", "target": "cat", "seconds": 60, "pick": 3}
+    assert calls["follow_view"] == {"car_id": "scout-1"}
 
 
 async def test_whole_number_floats_are_accepted(world: World) -> None:

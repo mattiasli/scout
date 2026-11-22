@@ -47,7 +47,10 @@ def fast_config(**overrides: Any) -> RobotConfig:
         ota_progress_timeout_s=5.0,
         settle_s=0.02,
         orbit_settle_s=0.05,
-        follow_lost_s=0.8,
+        follow_search_deg=120.0,
+        follow_frame_timeout_s=2.0,
+        follow_start_wait_s=2.0,
+        detector_linger_s=0.0,
         follow_stream_secs=3,
         follow_stream_resend_s=1.5,
         camera_tilt_scale=1.0,  # the simulated servo turns exactly as far as it's told

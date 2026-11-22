@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 from starlette.websockets import WebSocket
 
 from scout.contracts import (
@@ -39,6 +40,8 @@ from scout.contracts import (
 from scout.robot.captures import CaptureStore, valid_capture_id
 from scout.robot.config import RobotConfig
 from scout.robot.detector import (
+    COCO_LABELS,
+    Detection,
     Detector,
     DetectorFactory,
     DetectorUnavailable,
@@ -46,9 +49,17 @@ from scout.robot.detector import (
     normalise_label,
 )
 from scout.robot.errors import InvalidRequest, LinkClosed, ReplyTimeout, clean_text, error_for_code
-from scout.robot.follow import FollowTuning, pick_target, start_tilt
+from scout.robot.follow import (
+    FollowStep,
+    FollowTuning,
+    Search,
+    bearing_deg,
+    exit_side,
+    expected_position,
+    start_tilt,
+)
 from scout.robot.follow import plan as follow_plan
-from scout.robot.imaging import jpeg_size, labelled_grid, preview
+from scout.robot.imaging import GREEN, YELLOW, annotate, crop, jpeg_size, labelled_grid, preview
 from scout.robot.link import (
     CLOSE_ADMIN,
     CLOSE_GOING_AWAY,
@@ -68,6 +79,7 @@ from scout.robot.motion import (
     turn_rate,
 )
 from scout.robot.text import ago, cm_text, heading_label, plural, reason_phrase
+from scout.robot.tracker import Appearance, choose, describe, open_picture
 
 log = logging.getLogger("scout.robot")
 
@@ -86,6 +98,8 @@ DONE_REASONS = frozenset({"time", "obstacle", "stopped", "link", "replaced"})
 EVENT_KINDS = frozenset({"uno_lost", "uno_back", "uno_boot", "camera_error"})
 UNO_DONE_TIMEOUT_S = 1.5  # the car's own wait for the UNO's DONE beyond ``ms``
 _SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
+MAX_PICK = 20  # find numbers at most this many boxes; follow's pick goes up to it
+LEARN_MATCH = 0.6  # follow updates the target's look from sightings at least this alike
 
 Cancels = Literal["all", "follow", "none"]
 
@@ -178,6 +192,7 @@ class _Behaviour:
     activity: str  # CarSummary.activity while it runs
     interrupt: asyncio.Event = field(default_factory=asyncio.Event)
     reason: str | None = None
+    ready: asyncio.Event = field(default_factory=asyncio.Event)  # follow: locked on or searching
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
 
@@ -208,6 +223,9 @@ class _Car:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     behaviour: _Behaviour | None = None
     follow: dict[str, Any] | None = None
+    follow_view: _FollowView | None = None
+    follow_reference: bytes | None = None  # a close-up of the target as follow locked on
+    pickable: _Pickable | None = None
     moving: bool = False
     capturing: bool = False
     light: int | None = None
@@ -287,6 +305,106 @@ class _LatestFrame:
         self._event.clear()
 
 
+@dataclass(frozen=True)
+class _Pickable:
+    """The latest numbered picture, from find or follow_view: what ``follow(pick=n)``
+    refers to."""
+
+    at: float  # monotonic
+    frame: bytes
+    detections: list[Detection]  # in number order
+    tilt: int | None  # the camera tilt setting it was taken at
+
+
+@dataclass(frozen=True)
+class _FollowView:
+    """The latest frame follow acted on, and what it made of it."""
+
+    at: float  # wall clock
+    frame: bytes
+    candidates: list[Detection]
+    matches: list[float | None]
+    chosen: int | None
+    tilt: int
+    real_tilt: float
+    hfov: float
+
+
+@dataclass(frozen=True)
+class _FollowStart:
+    target: Detection | None  # the box picked, if one was
+    appearance: Appearance | None
+    tilt: int | None  # the tilt setting the pick was seen at
+    fresh: bool  # picked moments ago, so expect it where it was
+
+
+def _box(d: Detection) -> tuple[float, float, float, float]:
+    return d.x0, d.y0, d.x1, d.y1
+
+
+def _box_dict(d: Detection) -> dict[str, float]:
+    return {"left": round(d.x0, 2), "right": round(d.x1, 2), "top": round(d.y0, 2), "bottom": round(d.y1, 2)}
+
+
+def _direction_text(bearing: float) -> str:
+    if abs(bearing) < 3:
+        return "straight ahead"
+    return f"{abs(bearing):.0f}° {'right' if bearing > 0 else 'left'}"
+
+
+def _turned_deg(step: FollowStep, settings: CarSettings) -> float:
+    """About how far a follow step turns the car, clockwise positive."""
+    if not step.wz or step.vx:
+        return 0.0
+    return math.copysign(turn_rate(abs(step.wz), settings) * step.ms / 1000, step.wz)
+
+
+def _candidates(
+    detector: Detector, frame: bytes, label: str, min_score: float
+) -> tuple[list[Detection], list[np.ndarray]]:
+    """The frame's detections of ``label`` and what each looks like (runs in a thread)."""
+    found = [d for d in detector.detect(frame) if d.label == label and d.score >= min_score]
+    if not found:
+        return [], []
+    image = open_picture(frame)
+    return found, [describe(image, d) for d in found]
+
+
+def _appearance_of(frame: bytes, det: Detection) -> tuple[Appearance, bytes]:
+    """What a picked box looks like, and a close-up of it to show later."""
+    return Appearance.of(describe(open_picture(frame), det)), crop(frame, _box(det))
+
+
+def _render_view(view: _FollowView) -> tuple[bytes, list[dict[str, Any]], list[Detection]]:
+    """follow_view's picture (the target in green, the others numbered in yellow), its
+    listing, and the detections in number order."""
+    order = sorted(range(len(view.candidates)), key=lambda i: view.candidates[i].cx)
+    others: list[tuple[tuple[float, float, float, float], str, tuple[int, int, int]]] = []
+    chosen: list[tuple[tuple[float, float, float, float], str, tuple[int, int, int]]] = []
+    listing: list[dict[str, Any]] = []
+    for n, i in enumerate(order, 1):
+        d = view.candidates[i]
+        following = i == view.chosen
+        if following:
+            chosen.append((_box(d), f"{n} following", GREEN))
+        else:
+            others.append((_box(d), f"{n} {d.label}", YELLOW))
+        match = view.matches[i]
+        listing.append(
+            {
+                "number": n,
+                "label": d.label,
+                "following": following,
+                "match": None if match is None else round(match, 2),
+                "score": round(d.score, 2),
+                "direction": _direction_text(bearing_deg(d, view.hfov, view.real_tilt)),
+                "box": _box_dict(d),
+            }
+        )
+    image = annotate(view.frame, others + chosen)  # the target's box drawn last, on top
+    return image, listing, [view.candidates[i] for i in order]
+
+
 # -- the robot ---------------------------------------------------------------------
 
 
@@ -320,6 +438,7 @@ class Robot:
         self._detector: Detector | None = None
         self._detector_users = 0
         self._detector_lock = asyncio.Lock()
+        self._detector_unload: asyncio.TimerHandle | None = None
         self._cars: dict[str, _Car] = {}
         self._links: set[CarLink] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -334,6 +453,9 @@ class Robot:
 
     async def close(self) -> None:
         self._closed = True
+        if self._detector_unload is not None:
+            self._detector_unload.cancel()
+            self._detector_unload = None
         for car in self._cars.values():
             if car.behaviour is not None:
                 car.behaviour.stop("the server is shutting down")
@@ -996,14 +1118,85 @@ class Robot:
         except _Cancelled:
             return self._cancelled_result(car_id)
 
-    async def follow(self, car_id: str, *, target: str = "cat", seconds: int = 60) -> ActionResult:
-        """Start following ``target`` in the background; returns at once.
+    async def find(
+        self, car_id: str, *, target: str | None = None, size: ImageSize = "medium"
+    ) -> ActionResult:
+        """A picture with the objects the detector finds in it boxed and numbered left to
+        right; ``target`` keeps one class only. The numbers are what ``follow(pick=...)``
+        takes, for ``follow_pick_valid_s``."""
+        cfg = self.config
+        res = SIZE_RES[_choice("size", size, SIZE_RES)]
+        label = None
+        if target is not None:
+            if not isinstance(target, str) or normalise_label(target) not in COCO_LABELS:
+                raise InvalidRequest(
+                    f"find can't recognise {target!r}. It knows the COCO object classes, for example "
+                    "person, cat, dog, teddy bear, sports ball, chair or bottle."
+                )
+            label = normalise_label(target)
+        async with self._exclusive(car_id, cancels="none") as (car, link, _settings):
+            jpeg, w, h = await self._snap(car, link, res, cfg.look_quality)
+            tilt = _opt_int(car.telemetry.get("tilt"))
+            cm = car.telemetry.get("cm")
+        detector = await self._acquire_detector("Finding objects")
+        try:
+            detections = await asyncio.to_thread(detector.detect, jpeg)
+        finally:
+            self._release_detector()
+        found = sorted(
+            (d for d in detections if d.score >= cfg.find_min_score and (label is None or d.label == label)),
+            key=lambda d: d.cx,
+        )[:MAX_PICK]
+        boxes = [((d.x0, d.y0, d.x1, d.y1), f"{n} {d.label}", YELLOW) for n, d in enumerate(found, 1)]
+        image = await asyncio.to_thread(annotate, jpeg, boxes, min_width=w)
+        car.pickable = _Pickable(time.monotonic(), jpeg, found, tilt)
+        real_tilt = (tilt or 0) * cfg.camera_tilt_scale
+        listing = [
+            {
+                "number": n,
+                "label": d.label,
+                "score": round(d.score, 2),
+                "direction": _direction_text(bearing_deg(d, cfg.camera_hfov_deg, real_tilt)),
+                "box": _box_dict(d),
+            }
+            for n, d in enumerate(found, 1)
+        ]
+        what = label or "object"
+        if found:
+            counts = ", ".join(f"{n} {d['label']} ({d['direction']})" for n, d in enumerate(listing, 1))
+            summary = (
+                f"Found {plural(len(found), what)}, numbered left to right: {counts}. To follow one, call "
+                f"follow with pick set to its number (within {cfg.follow_pick_valid_s / 60:g} minutes)."
+            )
+        else:
+            summary = f"No {what} found in the picture. Turn, tilt or move and try again."
+        return ActionResult(
+            {
+                "resolution": f"{w}x{h}",
+                "found": listing,
+                "distance_cm": cm,
+                "tilt_deg": tilt,
+                "summary": summary,
+            },
+            images=[image],
+        )
 
-        Progress shows in ``status`` (activity "following", when the target was last
-        seen). It ends when the time is up, the target is out of sight for more than
-        3 s, ``stop`` or a direct motion command arrives, or the car disconnects.
+    async def follow(
+        self, car_id: str, *, target: str = "cat", seconds: int = 60, pick: int | None = None
+    ) -> ActionResult:
+        """Start following in the background; returns once it has locked on or started
+        looking, with the picture it locked on in.
+
+        ``pick`` follows that numbered box from the latest ``find`` or ``follow_view``
+        picture, and its class replaces ``target``; otherwise it takes the biggest
+        ``target`` in view. Progress shows in ``status`` and ``follow_view``. It ends when
+        the time is up, when a search for the lost target finds nothing, on ``stop`` or a
+        direct motion command, or when the car disconnects.
         """
+        cfg = self.config
         seconds = _int_arg("seconds", seconds, 5, 300)
+        if pick is not None:
+            pick = _int_arg("pick", pick, 1, MAX_PICK)
         if not isinstance(target, str) or not target.strip():
             raise InvalidRequest("target must name what to follow, such as cat, dog or person.")
         label = normalise_label(target)
@@ -1014,13 +1207,31 @@ class Robot:
         running = car.behaviour
         if running is not None and running.kind != "follow":
             raise CarBusy(f"{name} is busy {running.label}. Call stop to cancel it first.")
-        detector = await self._acquire_detector()
+        picked = car.pickable if pick is not None else None
+        chosen: Detection | None = None
+        if pick is not None:
+            if picked is None or time.monotonic() - picked.at > cfg.follow_pick_valid_s:
+                raise InvalidRequest(
+                    "pick takes a number from a find or follow_view picture of the last "
+                    f"{cfg.follow_pick_valid_s / 60:g} minutes. Call find first."
+                )
+            count = len(picked.detections)
+            if pick > count:
+                had = "none" if count == 0 else ("only number 1" if count == 1 else f"numbers 1 to {count}")
+                raise InvalidRequest(f"There's no number {pick} in the last picture: it had {had}.")
+            chosen = picked.detections[pick - 1]
+            label = chosen.label
+        detector = await self._acquire_detector("Following")
         try:
             if label not in detector.labels:
                 raise InvalidRequest(
                     f"{name} can't recognise {target.strip()!r}. It knows the COCO object classes, "
                     "for example cat, dog, person, teddy bear, sports ball, chair or bottle."
                 )
+            appearance: Appearance | None = None
+            reference: bytes | None = None
+            if picked is not None and chosen is not None:
+                appearance, reference = await asyncio.to_thread(_appearance_of, picked.frame, chosen)
             if running is not None:
                 await self._interrupt(car, f"a new follow of the {label} started")
             if car.link is not link or link.closed:
@@ -1032,6 +1243,7 @@ class Robot:
         car.behaviour = beh
         car.follow = {
             "target": label,
+            "picked": pick is not None,
             "state": "starting",
             "started": time.time(),
             "seconds": seconds,
@@ -1041,17 +1253,123 @@ class Robot:
             "obstacle_stops": 0,
             "ended_because": None,
         }
-        beh.task = self._spawn(self._follow_loop(car, link, settings, beh, detector, label, seconds))
+        car.follow_view = None
+        car.follow_reference = reference
+        start = _FollowStart(
+            target=chosen,
+            appearance=appearance,
+            tilt=picked.tilt if picked is not None else None,
+            fresh=picked is not None and time.monotonic() - picked.at < 10,
+        )
+        beh.task = self._spawn(self._follow_loop(car, link, settings, beh, detector, label, seconds, start))
+        with suppress(TimeoutError):
+            async with asyncio.timeout(cfg.follow_start_wait_s):
+                await beh.ready.wait()
+        return await self._follow_started(car, label, seconds)
+
+    async def _follow_started(self, car: _Car, label: str, seconds: int) -> ActionResult:
+        info = car.follow or {}
+        name = car.name
+        state = info.get("state")
+        view = car.follow_view
+        data: dict[str, Any] = {
+            "result": "following started",
+            "target": label,
+            "seconds": seconds,
+            "state": state,
+        }
+        images: list[bytes] = []
+        check = (
+            " Check now and then with follow_view that it's the right one. To switch, call follow with "
+            "pick set to a number from that picture; to take over, call stop or any move."
+        )
+        if view is not None and view.chosen is not None:
+            image, listing, order = await asyncio.to_thread(_render_view, view)
+            car.pickable = _Pickable(time.monotonic(), view.frame, order, view.tilt)
+            images.append(image)
+            data["in_view"] = listing
+            number = next(item["number"] for item in listing if item["following"])
+            how = "the one you picked" if info.get("picked") else f"the biggest {label} in view"
+            summary = (
+                f"{name} locked on to {how}, number {number} in the green box, and follows it for up to "
+                f"{seconds} seconds. It keeps to that one by its colours and searches if it goes out of "
+                "sight."
+            )
+        elif state == "searching":
+            summary = (
+                f"{name} can't see the {label} and is turning to look for it, for up to {seconds} seconds."
+            )
+        elif state == "ended":
+            summary = f"{name} stopped following straight away: {info.get('ended_because')}."
+            check = ""
+        else:
+            summary = f"{name} started following the {label} for up to {seconds} seconds."
+        data["summary"] = summary + check
+        return ActionResult(data, images=images)
+
+    async def follow_view(self, car_id: str) -> ActionResult:
+        """The latest picture follow acted on, with the target and other candidates boxed
+        and numbered, and the target as it was when follow locked on."""
+        car = self._cars.get(car_id)
+        if car is None or car.follow is None:
+            name = car.name if car is not None else "The car"
+            return ActionResult(
+                {
+                    "result": "not following",
+                    "summary": f"{name} hasn't followed anything yet. Use find to see what's in view, "
+                    "then follow with pick.",
+                }
+            )
+        status = self._follow_status(car)
+        view = car.follow_view
+        if view is None:
+            return ActionResult(
+                {
+                    "result": "no picture yet",
+                    "follow": status,
+                    "summary": f"{car.name} hasn't looked yet. Try again in a moment.",
+                }
+            )
+        image, listing, order = await asyncio.to_thread(_render_view, view)
+        car.pickable = _Pickable(time.monotonic(), view.frame, order, view.tilt)
+        images = [image]
+        if car.follow_reference is not None:
+            images.append(car.follow_reference)
+        label = status["target"]
+        age = round(time.time() - view.at, 1)
+        target = next((item for item in listing if item["following"]), None)
+        state = status["state"]
+        if state == "ended":
+            summary = f"Follow ended: {status.get('ended_because')}. The picture is the last one it acted on."
+        elif target is not None:
+            summary = (
+                f"{car.name} is following the {label} in the green box, number {target['number']}"
+                + (f" (match {target['match']:.2f})" if target["match"] is not None else "")
+                + f", in a picture from {age:g} s ago."
+            )
+            if status.get("unsure"):
+                summary += f" It isn't sure: {status['unsure']}."
+        else:
+            last = (status.get("last_step") or {}).get("why", "")
+            summary = (
+                f"{car.name} can't see the {label} it follows in this picture from {age:g} s ago. {last}."
+            )
+        if len(images) > 1:
+            summary += f" The second picture is the {label} as it was when follow locked on."
+        if state != "ended":
+            summary += (
+                " If it's following the wrong one, call follow with pick set to a number from this picture, "
+                "or call stop or any move to take over."
+            )
         return ActionResult(
             {
-                "result": "following started",
-                "target": label,
-                "seconds": seconds,
-                "summary": f"{name} started following the {label} for up to {seconds} seconds, with "
-                f"the camera starting at {start_tilt(label)}°. It stops when the time is up, when it loses "
-                f"sight of the {label} for more than {self.config.follow_lost_s:g} seconds, or on stop or "
-                "any motion command. Call status to see how it is going.",
-            }
+                "result": state,
+                "follow": status,
+                "picture_age_s": age,
+                "in_view": listing,
+                "summary": summary,
+            },
+            images=images,
         )
 
     # -- building blocks -----------------------------------------------------------
@@ -1575,36 +1893,68 @@ class Robot:
         if f.get("tilt") is not None:
             out["tilts"] = f.get("tilts", 0)
             out["camera_tilt_deg"] = f["tilt"]
+        out["picked"] = bool(f.get("picked"))
+        if "in_view" in f:
+            out["in_view"] = f["in_view"]  # how many of the target's class the last frame had
+            out["choice"] = f.get("choice")
+        if f.get("match") is not None:
+            out["match"] = f["match"]  # how alike the last sighting looked, 0 to 1
+        if f.get("unsure"):
+            out["unsure"] = f["unsure"]
+        if f.get("search"):
+            out["search"] = f["search"]
+        if f.get("searches"):
+            out["searches"] = f["searches"]
+            out["found_again"] = f.get("found_again", 0)
         if f.get("last_target"):
-            # The box in 0..1 of the picture (left and right across, top and bottom down)
-            # and the step that frame gave, with why; ms 0 means it held still.
+            # The box in 0..1 of the picture (left and right across, top and bottom down).
             out["last_target"] = f["last_target"]
-            out["last_step"] = f.get("last_step")
+        if f.get("last_step"):
+            # The step the last frame gave, with why; ms 0 means it held still.
+            out["last_step"] = f["last_step"]
         if f.get("obstacle_stops"):
             out["obstacle_stops"] = f["obstacle_stops"]
         if f.get("ended_because"):
             out["ended_because"] = f["ended_because"]
         return out
 
-    async def _acquire_detector(self) -> Detector:
+    async def _acquire_detector(self, what: str) -> Detector:
         async with self._detector_lock:
+            if self._detector_unload is not None:
+                self._detector_unload.cancel()
+                self._detector_unload = None
             if self._detector is None:
                 try:
                     self._detector = await asyncio.to_thread(self._detector_factory)
                 except DetectorUnavailable as exc:
-                    raise CarError(f"Following isn't available right now: {exc}.") from exc
+                    raise CarError(f"{what} isn't available right now: {exc}.") from exc
                 except Exception as exc:
                     log.exception("loading the object detector failed")
                     raise CarError(
-                        "Following isn't available right now: the object detector failed to load."
+                        f"{what} isn't available right now: the object detector failed to load."
                     ) from exc
             self._detector_users += 1
             return self._detector
 
     def _release_detector(self) -> None:
+        """The model stays in memory while something uses it and for a while after (a
+        find is usually followed by a follow), then it is dropped."""
         self._detector_users = max(0, self._detector_users - 1)
+        if self._detector_users > 0:
+            return
+        if self._detector_unload is not None:
+            self._detector_unload.cancel()
+            self._detector_unload = None
+        linger = self.config.detector_linger_s
+        if linger <= 0 or self._closed:
+            self._detector = None
+            return
+        self._detector_unload = asyncio.get_running_loop().call_later(linger, self._unload_detector)
+
+    def _unload_detector(self) -> None:
+        self._detector_unload = None
         if self._detector_users == 0:
-            self._detector = None  # the model is only kept in memory while following
+            self._detector = None
 
     async def _follow_loop(
         self,
@@ -1615,17 +1965,21 @@ class Robot:
         detector: Detector,
         label: str,
         seconds: int,
+        start: _FollowStart,
     ) -> None:
         cfg = self.config
         name = settings.name
         info = car.follow if car.follow is not None else {}
-        tuning = FollowTuning()
+        tuning = FollowTuning(search_deg=cfg.follow_search_deg)
         frames = _LatestFrame()
         started = time.monotonic()
         deadline = started + seconds
-        last_seen = started
-        seen = False
-        previous = None
+        appearance = start.appearance
+        target = start.target  # the latest sighting
+        expected = (target.cx, target.cy) if target is not None and start.fresh else None
+        search: Search | None = None
+        misses = 0
+        last_frame = started
         fatal: list[str] = []
         reason = "it ended"
 
@@ -1639,8 +1993,9 @@ class Robot:
 
         try:
             # Start from a known tilt: follow steers the camera up and down from there, and
-            # needs the tilt to turn a box into a direction.
-            tilt = start_tilt(label, tuning)
+            # needs the tilt to turn a box into a direction. A picked target is looked for
+            # at the tilt it was seen at.
+            tilt = start.tilt if start.tilt is not None else start_tilt(label, tuning)
             reply = await self._ack(car, link, "tilt", "the camera tilt", deg=tilt)
             applied = _opt_int(reply.get("deg"))
             info["tilt"] = tilt if applied is None else applied
@@ -1653,8 +2008,7 @@ class Robot:
                 "secs": cfg.follow_stream_secs,
             }
             await self._ack(car, link, "stream", "starting the video stream", on=True, **stream)
-            stream_sent = time.monotonic()
-            info["state"] = "following"
+            stream_sent = last_frame = time.monotonic()
             while True:
                 now = time.monotonic()
                 if beh.interrupted:
@@ -1669,9 +2023,8 @@ class Robot:
                 if now >= deadline:
                     reason = "the time was up"
                     break
-                if now - last_seen > cfg.follow_lost_s:
-                    what = "lost sight of" if seen else "couldn't see"
-                    reason = f"it {what} the {label} for more than {cfg.follow_lost_s:g} seconds"
+                if now - last_frame > cfg.follow_frame_timeout_s:
+                    reason = "the camera stopped sending pictures"
                     break
                 if now - stream_sent >= cfg.follow_stream_resend_s:
                     await link.fire("stream", on=True, **stream)
@@ -1679,39 +2032,90 @@ class Robot:
                 frame = await frames.get(wait=min(0.5, max(0.1, 2.0 / cfg.follow_fps)))
                 if frame is None:
                     continue
+                last_frame = time.monotonic()
                 info["frames"] = info.get("frames", 0) + 1
                 try:
-                    detections = await asyncio.to_thread(detector.detect, frame)
+                    candidates, descriptions = await asyncio.to_thread(
+                        _candidates, detector, frame, label, cfg.follow_min_score
+                    )
                 except Exception:
                     log.exception("object detection failed")
                     continue
-                det = pick_target(detections, label, previous, min_score=cfg.follow_min_score)
-                if det is None:
-                    continue
-                previous = det
-                seen = True
-                last_seen = time.monotonic()
-                info["last_seen"] = time.time()
-                step = follow_plan(
-                    det,
-                    car.telemetry.get("cm"),
-                    settings,
-                    hfov_deg=cfg.camera_hfov_deg,
-                    tilt_deg=info["tilt"],
-                    tilt_scale=cfg.camera_tilt_scale,
-                    tuning=tuning,
+                choice = choose(
+                    candidates, descriptions, appearance, expected, min_match=cfg.follow_match_min
                 )
-                # What it saw and decided last, for status: it explains a car that holds still.
-                info["last_target"] = {
-                    "left": round(det.x0, 2),
-                    "right": round(det.x1, 2),
-                    "top": round(det.y0, 2),
-                    "bottom": round(det.y1, 2),
-                    "centre": round(det.cx, 2),
-                    "width": round(det.width, 2),
-                    "height": round(det.height, 2),
-                    "score": round(det.score, 2),
-                }
+                real_tilt = info["tilt"] * cfg.camera_tilt_scale
+                car.follow_view = _FollowView(
+                    at=time.time(),
+                    frame=frame,
+                    candidates=candidates,
+                    matches=list(choice.matches) if choice.matches else [None] * len(candidates),
+                    chosen=choice.index,
+                    tilt=info["tilt"],
+                    real_tilt=real_tilt,
+                    hfov=cfg.camera_hfov_deg,
+                )
+                info["in_view"] = len(candidates)
+                info["choice"] = choice.why
+                det: Detection | None = None
+                if choice.index is not None:
+                    det = candidates[choice.index]
+                    if appearance is None:  # nothing picked: it locks on to the biggest
+                        appearance = Appearance.of(descriptions[choice.index])
+                        car.follow_reference = await asyncio.to_thread(crop, frame, _box(det))
+                    elif choice.match is not None and choice.match >= LEARN_MATCH and not choice.unsure:
+                        appearance.learn(descriptions[choice.index])
+                    if search is not None:
+                        info["found_again"] = info.get("found_again", 0) + 1
+                    target, search, misses = det, None, 0
+                    info.pop("search", None)
+                    info["state"] = "following"
+                    info["last_seen"] = time.time()
+                    info["match"] = None if choice.match is None else round(choice.match, 2)
+                    info["unsure"] = choice.why if choice.unsure else None
+                    info["last_target"] = {**_box_dict(det), "centre": round(det.cx, 2),
+                                           "width": round(det.width, 2), "height": round(det.height, 2),
+                                           "score": round(det.score, 2)}  # fmt: skip
+                    beh.ready.set()
+                    step = follow_plan(
+                        det,
+                        car.telemetry.get("cm"),
+                        settings,
+                        hfov_deg=cfg.camera_hfov_deg,
+                        tilt_deg=info["tilt"],
+                        tilt_scale=cfg.camera_tilt_scale,
+                        tuning=tuning,
+                    )
+                else:
+                    misses += 1
+                    if misses < cfg.follow_misses:
+                        continue  # one empty frame can be a missed detection: look again
+                    if search is None:
+                        if target is None:
+                            search = Search(label, "scan")
+                        else:
+                            bearing = bearing_deg(target, cfg.camera_hfov_deg, real_tilt)
+                            search = Search(label, exit_side(target), bearing)
+                        info["searches"] = info.get("searches", 0) + 1
+                    info["state"] = "searching"
+                    beh.ready.set()
+                    found_step = search.next_step(
+                        car.telemetry.get("cm"),
+                        settings,
+                        tilt_deg=info["tilt"],
+                        tilt_scale=cfg.camera_tilt_scale,
+                        tuning=tuning,
+                    )
+                    if found_step is None:
+                        turned = f"{search.turned_deg:.0f}°"
+                        if target is None:
+                            reason = f"it couldn't find a {label} after turning {turned} to look"
+                        else:
+                            reason = f"it lost sight of the {label} and didn't find it after turning {turned}"
+                        break
+                    step = found_step
+                    info["search"] = {"went_out": search.side, "turned_deg": round(search.turned_deg)}
+                    misses, expected = 0, None
                 info["last_step"] = {
                     "vx": step.vx,
                     "wz": step.wz,
@@ -1720,6 +2124,8 @@ class Robot:
                     "why": step.why,
                 }
                 if not step.acts:
+                    if det is not None:
+                        expected = (det.cx, det.cy)
                     continue
                 try:
                     async with asyncio.timeout(1.0):
@@ -1739,6 +2145,14 @@ class Robot:
                         info["moves"] = info.get("moves", 0) + 1
                 finally:
                     car.lock.release()
+                if det is not None:  # where it should be once the car has turned
+                    expected = expected_position(
+                        det,
+                        cfg.camera_hfov_deg,
+                        tilt_before=real_tilt,
+                        tilt_after=info["tilt"] * cfg.camera_tilt_scale,
+                        turned_deg=_turned_deg(step, settings),
+                    )
                 # Look again only once the car has stopped and the picture has settled:
                 # a frame taken while moving shows where the target was, not where it is.
                 busy_s = max(step.ms / 1000, cfg.settle_s if step.tilt is not None else 0.0)
@@ -1746,7 +2160,7 @@ class Robot:
                     async with asyncio.timeout(busy_s + cfg.follow_settle_s):
                         await beh.interrupt.wait()
                 frames.clear()
-                last_seen = max(last_seen, time.monotonic())  # it wasn't looking meanwhile
+                last_frame = time.monotonic()
         except LinkClosed:
             reason = f"{name} disconnected"
         except (CarError, CarOffline, CarBusy) as exc:
@@ -1767,6 +2181,7 @@ class Robot:
             info["ended_because"] = reason
             if car.behaviour is beh:
                 car.behaviour = None
+            beh.ready.set()
             beh.finished.set()
             self._release_detector()
             log.info("follow on car %s ended: %s", car.car_id, reason)

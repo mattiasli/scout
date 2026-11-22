@@ -1,4 +1,4 @@
-"""Picture helpers: sizes, previews, labelled grids and contact sheets (Pillow)."""
+"""Picture helpers: sizes, previews, labelled grids, contact sheets and boxes (Pillow)."""
 
 from __future__ import annotations
 
@@ -103,3 +103,55 @@ def labelled_grid(
         draw.rectangle((x, y + th, x + tw - 1, y + th + strip - 1), fill=(40, 40, 40))
         draw.text((x + 6, y + th + 4), label, fill=(240, 240, 240), font=font)
     return _encode(sheet, quality)
+
+
+Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in 0..1 of the picture
+GREEN = (40, 220, 90)
+YELLOW = (250, 200, 40)
+
+
+def annotate(
+    jpeg: bytes,
+    boxes: Sequence[tuple[Box, str, tuple[int, int, int]]],
+    *,
+    min_width: int = 640,
+    quality: int = 85,
+) -> bytes:
+    """The picture with each box outlined and labelled, scaled up to at least ``min_width``
+    so the labels stay legible on a small stream frame."""
+    img = _open_rgb(jpeg) or _placeholder(min_width, min_width * 3 // 4)
+    if img.width < min_width:
+        img = img.resize((min_width, round(img.height * min_width / img.width)), Image.Resampling.LANCZOS)
+    draw = ImageDraw.Draw(img)
+    font_size = max(14, img.width // 32)
+    font = _font(font_size)
+    line = max(2, img.width // 213)
+    for (x0, y0, x1, y1), label, colour in boxes:
+        left, top = round(x0 * img.width), round(y0 * img.height)
+        right, bottom = round(x1 * img.width) - 1, round(y1 * img.height) - 1
+        draw.rectangle((left, top, right, bottom), outline=colour, width=line)
+        if not label:
+            continue
+        text_box = draw.textbbox((0, 0), label, font=font)
+        tw, th = text_box[2] - text_box[0] + 8, text_box[3] - text_box[1] + 8
+        ty = top - th if top - th >= 0 else top + line  # above the box, or just inside it
+        tx = min(max(0, left), img.width - tw)
+        draw.rectangle((tx, ty, tx + tw, ty + th), fill=colour)
+        draw.text((tx + 4, ty + 4 - text_box[1]), label, fill=(0, 0, 0), font=font)
+    return _encode(img, quality)
+
+
+def crop(jpeg: bytes, box: Box, *, pad: float = 0.15, height: int = 320, quality: int = 85) -> bytes:
+    """A close-up of ``box`` with some margin, scaled to ``height`` pixels tall."""
+    img = _open_rgb(jpeg)
+    if img is None:
+        return _encode(_placeholder(height * 3 // 4, height), quality)
+    x0, y0, x1, y1 = box
+    px, py = (x1 - x0) * pad, (y1 - y0) * pad
+    left, top = max(0, round((x0 - px) * img.width)), max(0, round((y0 - py) * img.height))
+    right = min(img.width, max(left + 1, round((x1 + px) * img.width)))
+    bottom = min(img.height, max(top + 1, round((y1 + py) * img.height)))
+    part = img.crop((left, top, right, bottom))
+    scale = height / part.height
+    part = part.resize((max(1, round(part.width * scale)), height), Image.Resampling.LANCZOS)
+    return _encode(part, quality)
