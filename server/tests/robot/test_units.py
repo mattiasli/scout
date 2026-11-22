@@ -30,7 +30,7 @@ from scout.robot.detector import (
     normalise_label,
 )
 from scout.robot.errors import error_for_code
-from scout.robot.follow import FollowTuning, bearing_deg, pick_target, plan
+from scout.robot.follow import FollowTuning, bearing_deg, pick_target, plan, start_tilt
 from scout.robot.imaging import jpeg_size, labelled_grid, preview
 from scout.robot.motion import (
     PlannedMove,
@@ -443,8 +443,10 @@ def test_real_yolox_model_runs() -> None:
 
 
 def box(
-    cx: float, height: float, *, label: str = "cat", score: float = 0.9, bottom: float = 0.8
+    cx: float, height: float, *, label: str = "cat", score: float = 0.9, bottom: float | None = None
 ) -> Detection:
+    """A box 0.2 wide; in the middle of the picture top to bottom unless ``bottom`` is given."""
+    bottom = 0.5 + height / 2 if bottom is None else bottom
     return Detection(label, score, cx - 0.1, bottom - height, cx + 0.1, bottom)
 
 
@@ -452,6 +454,10 @@ def test_follow_bearing() -> None:
     assert bearing_deg(box(0.5, 0.4), 66) == 0
     assert bearing_deg(box(1.0, 0.4), 66) == pytest.approx(33)  # the picture's right edge
     assert bearing_deg(box(0.0, 0.4), 66) == pytest.approx(-33)
+    # Tilted up, the same spot in the picture is further round: the edge at 40° is 40° off.
+    assert bearing_deg(box(1.0, 0.4), 66, 40) == pytest.approx(
+        math.degrees(math.atan(math.tan(math.radians(33)) / math.cos(math.radians(40))))
+    )
     assert bearing_deg(box(0.75, 0.4), 66) == pytest.approx(
         math.degrees(math.atan(0.5 * math.tan(math.radians(33))))
     )
@@ -495,17 +501,52 @@ def test_follow_plan_drives_to_the_target_size() -> None:
     assert plan(box(0.5, 0.15), 20, s, hfov_deg=66).why == "hold: something is 20 cm ahead"
     step = plan(box(0.5, 0.15), 40, s, hfov_deg=66)
     assert step.ms == round(15 / (30 * speed_share(40, 90)) * 1000)
-    # Cut off at the bottom: closer than it looks, so no forward.
-    assert not plan(box(0.5, 0.2, bottom=0.99), 200, s, hfov_deg=66).moves
-    # A standing person cut off at the top keeps half the picture's height at any
-    # distance, so the width decides (the first floor run held still on the height).
-    far = Detection("person", 0.9, 0.45, 0.0, 0.55, 0.5)  # 0.10 wide
-    right = Detection("person", 0.9, 0.375, 0.0, 0.625, 0.5)  # 0.25 wide
-    close = Detection("person", 0.9, 0.3, 0.0, 0.7, 0.5)  # 0.40 wide
+    # A person goes by width, and so does anything cut off at the top or bottom: its
+    # height then depends on the tilt more than the distance.
+    far = Detection("person", 0.9, 0.45, 0.0, 0.55, 0.5)  # cut off at the top, 0.10 wide
+    right = Detection("person", 0.9, 0.405, 0.2, 0.595, 1.0)  # cut off at the bottom, 0.19 wide
+    close = Detection("person", 0.9, 0.35, 0.2, 0.65, 1.0)  # 0.30 wide
     assert plan(far, None, s, hfov_deg=66).vx == 40 and "width 0.10" in plan(far, None, s, hfov_deg=66).why
     assert plan(right, None, s, hfov_deg=66).why.startswith("hold: the person is centred")
     assert plan(close, None, s, hfov_deg=66).vx == -30
-    assert FollowTuning().target_width == 0.25
+    whole = Detection("person", 0.9, 0.45, 0.1, 0.55, 0.9)  # wholly in view, still width
+    assert "width 0.10" in plan(whole, None, s, hfov_deg=66).why
+    cut_cat = Detection("cat", 0.9, 0.3, 0.4, 0.7, 1.0)
+    assert "width 0.40" in plan(cut_cat, None, s, hfov_deg=66).why
+    assert "height 0.15" in plan(box(0.5, 0.15), 200, s, hfov_deg=66).why  # a cat in view
+    # The width is corrected for the tilt: looking up at it, a box as wide is nearer
+    # across the floor (part of the line of sight is height).
+    level = plan(right, 300, s, hfov_deg=66, tilt_deg=0, tuning=FollowTuning(size_deadband=0.01))
+    tilted = plan(right, 300, s, hfov_deg=66, tilt_deg=40, tuning=FollowTuning(size_deadband=0.01))
+    assert not level.moves and tilted.vx == -30
+    # The second floor run, camera at 40°, person about 2 m away: the box was cut off at
+    # the bottom and as tall as a cat at 60 cm, so judging by height it held still. Now
+    # it drives, and tilts down to bring the head up from the middle of the picture.
+    seen = Detection("person", 0.9, 0.46, 0.54, 0.57, 0.99)
+    step = plan(seen, 199, s, hfov_deg=66, tilt_deg=40)
+    assert step.vx == 40 and "width 0.12" in step.why
+    assert step.tilt == 25 and step.why.startswith("tilt down to 25°, keeping the person's top near the top")
+
+
+def test_follow_tilt_keeps_the_target_in_view() -> None:
+    s = CarSettings()
+    assert start_tilt("person") == 30
+    assert start_tilt("cat") == start_tilt("sports ball") == 0
+    # In view: kept in the middle. A cat low in the picture (centre 0.75) is 13.7° below
+    # the middle; the tilt takes 80 % of that.
+    step = plan(Detection("cat", 0.9, 0.4, 0.55, 0.6, 0.95), None, s, hfov_deg=66, tilt_deg=0)
+    assert step.tilt == -11 and "keeping the cat in the middle of the picture" in step.why
+    assert step.acts and not step.moves  # the size is right: tilt only
+    assert plan(box(0.5, 0.4), None, s, hfov_deg=66, tilt_deg=12).tilt is None  # centred
+    # Cut off at the bottom: its top is kept at 0.2.
+    person = Detection("person", 0.9, 0.4, 0.22, 0.6, 1.0)
+    assert plan(person, None, s, hfov_deg=66, tilt_deg=30).tilt is None  # close enough to 0.2
+    # Cut off at the top: up a step, as far as the servo goes.
+    tall = Detection("person", 0.9, 0.4, 0.0, 0.6, 0.7)
+    assert plan(tall, None, s, hfov_deg=66, tilt_deg=25).tilt == 35
+    assert plan(tall, None, s, hfov_deg=66, tilt_deg=35).tilt == 40
+    assert plan(tall, None, s, hfov_deg=66, tilt_deg=40).tilt is None
+    assert plan(tall, None, s, hfov_deg=66, tilt_deg=40).why.startswith("back about")  # still moves
 
 
 def test_pick_target_tracks_the_previous_one() -> None:

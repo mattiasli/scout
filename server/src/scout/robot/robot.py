@@ -46,7 +46,7 @@ from scout.robot.detector import (
     normalise_label,
 )
 from scout.robot.errors import InvalidRequest, LinkClosed, ReplyTimeout, clean_text, error_for_code
-from scout.robot.follow import FollowTuning, pick_target
+from scout.robot.follow import FollowTuning, pick_target, start_tilt
 from scout.robot.follow import plan as follow_plan
 from scout.robot.imaging import jpeg_size, labelled_grid, preview
 from scout.robot.link import (
@@ -1047,10 +1047,10 @@ class Robot:
                 "result": "following started",
                 "target": label,
                 "seconds": seconds,
-                "summary": f"{name} started following the {label} for up to {seconds} seconds. It stops when "
-                f"the time is up, when it loses sight of the {label} for more than "
-                f"{self.config.follow_lost_s:g} seconds, or on stop or any motion command. Call status to "
-                "see how it is going.",
+                "summary": f"{name} started following the {label} for up to {seconds} seconds, with "
+                f"the camera starting at {start_tilt(label)}°. It stops when the time is up, when it loses "
+                f"sight of the {label} for more than {self.config.follow_lost_s:g} seconds, or on stop or "
+                "any motion command. Call status to see how it is going.",
             }
         )
 
@@ -1572,6 +1572,9 @@ class Robot:
         out["last_seen_s_ago"] = None if last is None else round(now - last, 1)
         out["frames"] = f.get("frames", 0)
         out["moves"] = f.get("moves", 0)
+        if f.get("tilt") is not None:
+            out["tilts"] = f.get("tilts", 0)
+            out["camera_tilt_deg"] = f["tilt"]
         if f.get("last_target"):
             # The box in 0..1 of the picture (left and right across, top and bottom down)
             # and the step that frame gave, with why; ms 0 means it held still.
@@ -1635,6 +1638,13 @@ class Robot:
                 fatal.append(str(error_for_code(reply.get("code"), reply.get("msg"), name)))
 
         try:
+            # Start from a known tilt: follow steers the camera up and down from there, and
+            # needs the tilt to turn a box into a direction.
+            tilt = start_tilt(label, tuning)
+            reply = await self._ack(car, link, "tilt", "the camera tilt", deg=tilt)
+            applied = _opt_int(reply.get("deg"))
+            info["tilt"] = tilt if applied is None else applied
+            await asyncio.sleep(cfg.settle_s)
             link.stream_sink = frames.put
             stream: dict[str, Any] = {
                 "res": "qvga",
@@ -1683,7 +1693,12 @@ class Robot:
                 last_seen = time.monotonic()
                 info["last_seen"] = time.time()
                 step = follow_plan(
-                    det, car.telemetry.get("cm"), settings, hfov_deg=cfg.camera_hfov_deg, tuning=tuning
+                    det,
+                    car.telemetry.get("cm"),
+                    settings,
+                    hfov_deg=cfg.camera_hfov_deg,
+                    tilt_deg=info["tilt"],
+                    tuning=tuning,
                 )
                 # What it saw and decided last, for status: it explains a car that holds still.
                 info["last_target"] = {
@@ -1696,8 +1711,14 @@ class Robot:
                     "height": round(det.height, 2),
                     "score": round(det.score, 2),
                 }
-                info["last_step"] = {"vx": step.vx, "wz": step.wz, "ms": step.ms, "why": step.why}
-                if not step.moves:
+                info["last_step"] = {
+                    "vx": step.vx,
+                    "wz": step.wz,
+                    "ms": step.ms,
+                    "tilt": step.tilt,
+                    "why": step.why,
+                }
+                if not step.acts:
                     continue
                 try:
                     async with asyncio.timeout(1.0):
@@ -1707,14 +1728,21 @@ class Robot:
                 try:
                     if beh.interrupted or link.closed:
                         continue
-                    await link.fire("move", on_reply, vx=step.vx, vy=0, wz=step.wz, ms=step.ms)
-                    info["moves"] = info.get("moves", 0) + 1
+                    if step.tilt is not None:
+                        reply = await self._ack(car, link, "tilt", "the camera tilt", deg=step.tilt)
+                        applied = _opt_int(reply.get("deg"))
+                        info["tilt"] = step.tilt if applied is None else applied
+                        info["tilts"] = info.get("tilts", 0) + 1
+                    if step.moves:
+                        await link.fire("move", on_reply, vx=step.vx, vy=0, wz=step.wz, ms=step.ms)
+                        info["moves"] = info.get("moves", 0) + 1
                 finally:
                     car.lock.release()
                 # Look again only once the car has stopped and the picture has settled:
                 # a frame taken while moving shows where the target was, not where it is.
+                busy_s = max(step.ms / 1000, cfg.settle_s if step.tilt is not None else 0.0)
                 with suppress(TimeoutError):
-                    async with asyncio.timeout(step.ms / 1000 + cfg.follow_settle_s):
+                    async with asyncio.timeout(busy_s + cfg.follow_settle_s):
                         await beh.interrupt.wait()
                 frames.clear()
                 last_seen = max(last_seen, time.monotonic())  # it wasn't looking meanwhile

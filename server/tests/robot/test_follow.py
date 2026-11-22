@@ -73,7 +73,8 @@ async def test_follow_approaches_the_cat_and_stops_on_request(harness: Harness) 
     assert status["follow"]["moves"] > 0
     assert 0 <= status["follow"]["last_target"]["centre"] <= 1
     assert 0 < status["follow"]["last_target"]["height"] <= 1
-    assert set(status["follow"]["last_step"]) == {"vx", "wz", "ms", "why"}
+    assert set(status["follow"]["last_step"]) == {"vx", "wz", "ms", "tilt", "why"}
+    assert -40 <= status["follow"]["camera_tilt_deg"] <= 40  # starts level for a cat
     assert 40 < status["follow"]["seconds_left"] <= 60
     assert "following the cat" in status["summary"]
     streams = [m for m in car.received if m.get("t") == "stream"]
