@@ -80,7 +80,7 @@ from scout.robot.motion import (
     turn_rate,
 )
 from scout.robot.text import ago, cm_text, heading_label, plural, reason_phrase
-from scout.robot.tracker import Appearance, choose, describe, open_picture
+from scout.robot.tracker import Appearance, Choice, choose, describe, open_picture
 
 log = logging.getLogger("scout.robot")
 
@@ -376,6 +376,57 @@ def _candidates(
 def _appearance_of(frame: bytes, det: Detection) -> tuple[Appearance, bytes]:
     """What a picked box looks like, and a close-up of it to show later."""
     return Appearance.of(describe(open_picture(frame), det)), crop(frame, _box(det))
+
+
+@dataclass
+class _Checking:
+    """Follow isn't sure the one it sees is the one it follows: it turns and tilts to keep
+    it in view but doesn't drive, until enough sure sightings in a row or a pick."""
+
+    why: str
+    baseline: float | None  # how sure the detector usually was of the target, before
+    streak: int = 0  # sure sightings in a row since
+
+
+def _check(
+    checking: _Checking | None,
+    choice: Choice,
+    det: Detection,
+    label: str,
+    typical_score: float | None,
+    *,
+    found_again: bool,
+    confirmed: bool,
+    score_drop: float,
+    confirm_frames: int,
+) -> _Checking | None:
+    """Whether follow should hold back from driving after this sighting, and why.
+
+    ``confirmed`` means the AI picked this one and follow hasn't lost it since; a look-alike
+    close by is then no reason to doubt it, because the AI saw both when it picked.
+    """
+    doubt = None
+    if found_again:
+        doubt = f"it lost sight of the {label} and has found one again"
+    elif typical_score is not None and det.score < score_drop * typical_score:
+        doubt = (
+            f"the detector is much less sure this is a {label} ({det.score:.2f}, "
+            f"against {typical_score:.2f} before)"
+        )
+    elif choice.unsure and not confirmed:
+        doubt = choice.why
+    if doubt is not None and (checking is None or found_again):
+        checking = _Checking(doubt, typical_score if checking is None else checking.baseline)
+    if checking is None:
+        return None
+    sure = (
+        choice.match is not None
+        and choice.match >= LEARN_MATCH
+        and (confirmed or not choice.unsure)
+        and (checking.baseline is None or det.score >= score_drop * checking.baseline)
+    )
+    checking.streak = checking.streak + 1 if sure else 0
+    return None if checking.streak >= confirm_frames else checking
 
 
 def _monotonic(wall: float) -> float:
@@ -1305,6 +1356,12 @@ class Robot:
                 f"{seconds} seconds. It keeps to that one by its colours and searches if it goes out of "
                 "sight."
             )
+            if info.get("checking"):
+                summary += (
+                    f" It isn't sure yet ({info['checking']}), so it only turns to keep it in view and "
+                    f"doesn't drive. If number {number} is the right one, call follow with pick set to "
+                    f"{number} to confirm."
+                )
         elif state == "searching":
             summary = (
                 f"{name} can't see the {label} and is turning to look for it, for up to {seconds} seconds."
@@ -1357,7 +1414,14 @@ class Robot:
                 + (f" (match {target['match']:.2f})" if target["match"] is not None else "")
                 + f", in a picture from {age:g} s ago."
             )
-            if status.get("unsure"):
+            if status.get("checking"):
+                summary += (
+                    f" It isn't driving until it's sure this is the right one, as {status['checking']}; "
+                    "it only turns and tilts to keep it in view. Compare the green box with the second "
+                    f"picture: if it's the right one, call follow with pick set to {target['number']} to "
+                    "confirm."
+                )
+            elif status.get("unsure"):
                 summary += f" It isn't sure: {status['unsure']}."
         else:
             last = (status.get("last_step") or {}).get("why", "")
@@ -1912,6 +1976,9 @@ class Robot:
             out["match"] = f["match"]  # how alike the last sighting looked, 0 to 1
         if f.get("unsure"):
             out["unsure"] = f["unsure"]
+        if f.get("checking"):
+            # Why it only turns and tilts, not driving, until it's sure or a pick confirms.
+            out["checking"] = f["checking"]
         if f.get("search"):
             out["search"] = f["search"]
         if f.get("searches"):
@@ -1992,6 +2059,9 @@ class Robot:
         expected = (target.cx, target.cy) if target is not None and start.fresh else None
         drift = 0.0  # how far the target had just moved across the picture by itself
         sure = 0  # sure sightings in a row
+        typical_score = target.score if target is not None else None  # the detector's, usually
+        confirmed = target is not None  # the AI picked it, and follow hasn't lost it since
+        checking: _Checking | None = None
         search: Search | None = None
         misses = 0
         last_frame = started
@@ -2068,6 +2138,7 @@ class Robot:
                         cfg.follow_size_change_max,
                         cfg.follow_size_change * cfg.follow_size_change_growth**lost_s,
                     ),
+                    typical_score=typical_score,
                 )
                 real_tilt = info["tilt"] * cfg.camera_tilt_scale
                 car.follow_view = _FollowView(
@@ -2086,17 +2157,38 @@ class Robot:
                 det: Detection | None = None
                 if choice.index is not None:
                     det = candidates[choice.index]
+                    found_again = search is not None
+                    if found_again:
+                        info["found_again"] = info.get("found_again", 0) + 1
                     if appearance is None:  # nothing picked: it locks on to the biggest
                         appearance = Appearance.of(descriptions[choice.index])
                         car.follow_reference = await asyncio.to_thread(crop, frame, _box(det))
-                    elif choice.match is not None and choice.match >= LEARN_MATCH and not choice.unsure:
-                        sure += 1
-                        if sure >= cfg.follow_learn_after:
-                            appearance.learn(descriptions[choice.index])
                     else:
-                        sure = 0
-                    if search is not None:
-                        info["found_again"] = info.get("found_again", 0) + 1
+                        checking = _check(
+                            checking,
+                            choice,
+                            det,
+                            label,
+                            typical_score,
+                            found_again=found_again,
+                            confirmed=confirmed,
+                            score_drop=cfg.follow_score_drop,
+                            confirm_frames=cfg.follow_confirm_frames,
+                        )
+                    if checking is not None:
+                        sure = 0  # nothing learnt from what may be something else
+                    else:
+                        if typical_score is None:
+                            typical_score = det.score
+                        else:
+                            typical_score += cfg.follow_score_rate * (det.score - typical_score)
+                        if choice.match is not None and choice.match >= LEARN_MATCH and not choice.unsure:
+                            sure += 1
+                            if sure >= cfg.follow_learn_after:
+                                appearance.learn(descriptions[choice.index])
+                        else:
+                            sure = 0
+                    info["checking"] = None if checking is None else checking.why
                     drift = det.cx - expected[0] if expected is not None else 0.0
                     target, target_tilt, search, misses = det, info["tilt"], None, 0
                     seen_at = time.monotonic()
@@ -2117,6 +2209,9 @@ class Robot:
                         tilt_deg=info["tilt"],
                         tilt_scale=cfg.camera_tilt_scale,
                         tuning=tuning,
+                        hold=None
+                        if checking is None
+                        else f"not driving until it's sure this is the {label}, as {checking.why}",
                     )
                 else:
                     misses += 1
@@ -2124,6 +2219,7 @@ class Robot:
                     if misses < cfg.follow_misses:
                         continue  # one empty frame can be a missed detection: look again
                     if search is None:
+                        confirmed = False  # what it finds next may be something else
                         if target is None:
                             search = Search(label, "scan")
                         else:

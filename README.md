@@ -17,6 +17,8 @@ on the same WiFi network as the car.
   photos you can download and use in Blender.
 - **Follow someone.** Point at the person (or the cat) in the picture and Scout keeps to
   that one, gently and not too close, and looks for them if they leave the picture.
+  When it isn't sure it has found the right one again, it stops driving until it is,
+  or until the AI has looked and confirmed.
 - **Just drive it around.** It has mecanum wheels, so it can move sideways and
   diagonally as well as forwards and back.
 

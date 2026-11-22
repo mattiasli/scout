@@ -89,7 +89,9 @@ because there is no gyroscope, so check with look.
 - Pass look=true to move, turn and drive to get a picture afterwards in the same call.
 - To follow a particular person or thing, call find to get the objects in view numbered, \
 then follow with pick set to the right number. Check with follow_view now and then that \
-it is still on the right one; pick again or call stop to take over if it isn't.
+it is still on the right one; pick again or call stop to take over if it isn't. When follow \
+isn't sure it has the right one (status follow.checking says why), it only turns to keep it \
+in view and doesn't drive: look with follow_view and confirm with follow pick set to its number.
 - One person drives at a time. Call release_car when you're done; the car is also \
 released after 2 minutes without commands.
 - Call stop at once if anything looks wrong.
@@ -355,7 +357,11 @@ TOOLS: list[ToolSpec] = [
             "width of their head and shoulders). When the target goes out of sight it searches: it "
             "turns towards the side it went out, tilts if it went out at the top or bottom, or "
             "drives a short way towards where it vanished, then turns round looking for it, up to a "
-            "full circle. It never drives forward towards anything the distance sensor sees close "
+            "full circle. It drives only while it's sure it has the right one: after losing it and "
+            "finding one again, or when the detector is much less sure of it than before (a coat on a "
+            "hook taken for a person), it only turns and tilts until it has seen it clearly a few "
+            "times or you confirm by calling follow with its number from follow_view. "
+            "It never drives forward towards anything the distance sensor sees close "
             "by, and the car is slow, so it can't keep up with someone walking. It runs in the "
             "background: the call returns once it has locked on, with the picture it locked on in "
             "(the target in a green box), and it follows for up to `seconds` "
@@ -389,8 +395,8 @@ TOOLS: list[ToolSpec] = [
             "check it is following the right one. If it isn't, call follow with pick set to the "
             "right number in this picture to switch, or call stop or any move to take over. Also "
             "returns how alike the target looks to the original (match, 0 to 1), whether another "
-            "candidate looks almost as alike, whether it is searching and what it did last. It "
-            "doesn't move the car."
+            "candidate looks almost as alike, whether it is searching, whether it is holding back from "
+            "driving until it's sure (and why), and what it did last. It doesn't move the car."
         ),
         read_only=True,
     ),

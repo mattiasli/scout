@@ -85,6 +85,14 @@ class RobotConfig:
     # Sure sightings in a row (not unsure, matching at least LEARN_MATCH) before follow
     # updates the target's look from them, so one wrong pick doesn't teach it a new look.
     follow_learn_after: int = 3
+    # Follow drives only while it's sure the one it sees is the one it follows. After it
+    # has lost it and found one again, or when the detector is less than follow_score_drop
+    # times as sure of it as usual (a coat on a hook taken for a person), it only turns and
+    # tilts until follow_confirm_frames sure sightings in a row, or the AI confirms with a
+    # pick. follow_score_rate is how fast "as usual" follows the detector's confidence.
+    follow_score_drop: float = 0.7
+    follow_score_rate: float = 0.2
+    follow_confirm_frames: int = 2
     follow_start_wait_s: float = 4.0  # follow returns once it has locked on, or after this
     follow_pick_valid_s: float = 120.0  # how long find's or follow_view's numbers stay valid
     find_min_score: float = 0.35

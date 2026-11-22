@@ -200,8 +200,10 @@ def choose(
     min_match: float,
     last: Detection | None = None,
     max_size_change: float = math.inf,
+    typical_score: float | None = None,
     position_weight: float = 0.5,
     size_weight: float = 0.3,
+    score_weight: float = 0.3,
     margin: float = 0.08,
 ) -> Choice:
     """The candidate that is the target.
@@ -209,9 +211,11 @@ def choose(
     Without an appearance yet (nothing picked), the biggest. Otherwise the best of those
     that match at least ``min_match`` and are at most ``max_size_change`` times bigger or
     smaller than ``last`` (the latest sighting), scored by match less ``position_weight``
-    times its distance from ``expected`` (in picture widths) and less ``size_weight``
-    times its size change (``size_change``). ``unsure`` when the runner-up scores within
-    ``margin``.
+    times its distance from ``expected`` (in picture widths), less ``size_weight`` times
+    its size change (``size_change``), and less ``score_weight`` times how much less sure
+    the detector is of it than ``typical_score``, how sure it usually is of the target: a
+    chair or a coat on a hook taken for a person is taken with less confidence than a
+    person standing in view. ``unsure`` when the runner-up scores within ``margin``.
     """
     if not candidates:
         return Choice(None, None, False, "none in view")
@@ -234,6 +238,8 @@ def choose(
                 )
                 continue
             score -= size_weight * abs(change)
+        if typical_score is not None:
+            score -= score_weight * max(0.0, typical_score - det.score)
         if expected is not None:
             score -= position_weight * math.hypot(det.cx - expected[0], det.cy - expected[1])
         scored.append((score, i))
