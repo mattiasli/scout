@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -64,3 +65,23 @@ def test_drop_root_hands_over_the_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_
     # Groups and group id go first: after setuid there's no permission left to change them.
     assert switched == [("groups", []), ("gid", 4343), ("uid", 4242)]
     assert os.environ["HOME"] == "/app"
+
+
+def test_ordinary_logs_go_to_stdout_and_problems_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = logging.getLogger("scout.test_main")
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+    handlers = entry.log_handlers()
+    for handler in handlers:
+        logger.addHandler(handler)
+    try:
+        logger.info("all fine")
+        logger.warning("look at this")
+    finally:
+        for handler in handlers:
+            logger.removeHandler(handler)
+    out, err = capsys.readouterr()
+    assert "INFO scout.test_main: all fine" in out
+    assert "look at this" not in out
+    assert "WARNING scout.test_main: look at this" in err
+    assert "all fine" not in err

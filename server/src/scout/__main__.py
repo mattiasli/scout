@@ -48,8 +48,28 @@ def drop_root(data_dir: Path) -> None:
     log.info("Running as %s; %s belongs to it", run_as, data_dir)
 
 
+class _BelowWarning(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno < logging.WARNING
+
+
+def log_handlers() -> list[logging.Handler]:
+    """INFO and below go to stdout, warnings and errors to stderr.
+
+    Railway marks every line on stderr as an error, so ordinary logs must not go there.
+    """
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    out = logging.StreamHandler(sys.stdout)
+    out.addFilter(_BelowWarning())
+    err = logging.StreamHandler(sys.stderr)
+    err.setLevel(logging.WARNING)
+    for handler in (out, err):
+        handler.setFormatter(fmt)
+    return [out, err]
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, handlers=log_handlers())
     try:
         config = Config.from_env()
     except ConfigError as exc:
@@ -76,8 +96,10 @@ def main() -> None:
         timeout_graceful_shutdown=10,
         server_header=False,
         log_level="info",
+        # uvicorn's own config would send its logs to stderr; let them reach ours instead.
+        log_config=None,
     )
-    # uvicorn.Config sets up its loggers; add the token redaction on top of that.
+    # uvicorn.Config sets the levels of its loggers; add the token redaction on top.
     install_log_redaction()
     uvicorn.Server(server_config).run()
 
