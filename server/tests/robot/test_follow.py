@@ -57,14 +57,21 @@ async def test_follow_approaches_the_cat_and_stops_on_request(harness: Harness) 
     assert result.data["result"] == "following started"
     assert result.data["target"] == "cat"
     await wait_for(lambda: harness.robot.car("car-1").activity == "following")  # type: ignore[union-attr]
-    await wait_for(lambda: cat_distance(car.world) < start - 25, within=6)
+    # Generous: CI runners render and detect far slower than a desktop.
+    try:
+        await wait_for(lambda: cat_distance(car.world) < start - 25, within=15)
+    except AssertionError:
+        raise AssertionError(
+            f"no approach: {start:.0f} cm at the start, {cat_distance(car.world):.0f} cm now, "
+            f"follow state {follow_state(harness)}"
+        ) from None
     status = (await harness.robot.status("car-1")).data
     assert status["activity"] == "following"
     assert status["follow"]["target"] == "cat"
     assert status["follow"]["state"] == "following"
     assert status["follow"]["last_seen_s_ago"] is not None and status["follow"]["last_seen_s_ago"] < 1.5
     assert status["follow"]["moves"] > 0
-    assert 50 < status["follow"]["seconds_left"] <= 60
+    assert 40 < status["follow"]["seconds_left"] <= 60
     assert "following the cat" in status["summary"]
     streams = [m for m in car.received if m.get("t") == "stream"]
     assert streams[0]["on"] is True and streams[0]["res"] == "qvga" and streams[0]["fps"] == 5

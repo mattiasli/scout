@@ -102,9 +102,10 @@ jobs:
       - name: Type check
         run: uv run mypy
       - name: Test
+        id: test
         run: uv run pytest --cov=scout --cov=scout_sim --cov-report=term-missing --junitxml=junit.xml
       - name: Show failing tests on the pull request
-        if: failure()
+        if: failure() && steps.test.outcome == 'failure'
         run: |
           python3 - <<'EOF'
           import xml.etree.ElementTree as ET

@@ -35,7 +35,10 @@ def drop_root(data_dir: Path) -> None:
     uid, gid = entry.pw_uid, entry.pw_gid
     data_dir.mkdir(parents=True, exist_ok=True)
     for root, dirs, files in os.walk(data_dir):
-        for path in [root, *(os.path.join(root, name) for name in (*dirs, *files))]:
+        # Each directory comes up once as ``root``. Symlinks to directories are listed in
+        # ``dirs`` but never walked, so they are handled here like files.
+        links = [name for name in dirs if os.path.islink(os.path.join(root, name))]
+        for path in [root, *(os.path.join(root, name) for name in (*files, *links))]:
             if os.lstat(path).st_uid != uid:
                 os.lchown(path, uid, gid)
     os.setgroups([])
