@@ -20,6 +20,7 @@ from scout.robot.follow import (
     exit_side,
     expected_position,
     looks_far,
+    plan,
 )
 from scout.robot.imaging import GREEN, YELLOW, annotate, crop, jpeg_size
 from scout.robot.tracker import Appearance, choose, describe, open_picture, similarity, size_change
@@ -181,6 +182,18 @@ def test_the_nearer_size_wins_between_look_alikes() -> None:
     assert choice.index == 1
 
 
+def test_the_one_the_detector_is_surer_of_wins_between_look_alikes() -> None:
+    # On the floor, a coat rack hung with dark clothes was taken for a person as big as the
+    # one followed, its colours as alike, but the detector was far less sure of it.
+    look = describe(scene((LEFT, RED, BLUE)), person(LEFT))
+    me = Appearance.of(look)
+    me_now, rack = person(LEFT, score=0.85), person(RIGHT, score=0.47)
+    tied = choose([me_now, rack], [look, look], me, None, min_match=0.45)
+    assert tied.unsure  # alike in every other way
+    choice = choose([me_now, rack], [look, look], me, None, min_match=0.45, typical_score=0.85)
+    assert choice.index == 0 and not choice.unsure
+
+
 def test_a_box_cut_off_at_an_edge_may_be_bigger_than_it_looks() -> None:
     whole = person((0.40, 0.1, 0.66, 0.9))
     at_the_edge = person((0.0, 0.1, 0.08, 0.9))  # stepping out of the picture on the left
@@ -236,6 +249,16 @@ def test_exit_side() -> None:
     assert exit_side(walking, drift=0.18) == "right"
     assert exit_side(Detection("cat", 0.9, 0.2, 0.4, 0.4, 0.6), drift=-0.15) == "left"
     assert exit_side(Detection("cat", 0.9, 0.4, 0.4, 0.6, 0.6), drift=0.02) == "middle"  # jitter
+
+
+def test_holding_back_still_turns_but_doesnt_drive() -> None:
+    settings = CarSettings()
+    far = person((0.45, 0.1, 0.55, 0.9))
+    assert plan(far, 200, settings, hfov_deg=81.0).vx > 0
+    held = plan(far, 200, settings, hfov_deg=81.0, hold="not sure")
+    assert (held.vx, held.wz, held.ms, held.why) == (0, 0, 0, "hold: not sure")
+    off_centre = person((0.80, 0.1, 0.90, 0.9))
+    assert plan(off_centre, 200, settings, hfov_deg=81.0, hold="not sure").wz > 0
 
 
 def test_looks_far() -> None:

@@ -12,6 +12,8 @@ import pytest
 from scout.contracts import CarBusy, CarError
 from scout.robot import Detection, DetectorUnavailable, InvalidRequest
 from scout.robot.detector import COCO_LABELS
+from scout.robot.robot import _check, _Checking
+from scout.robot.tracker import Choice
 from scout_sim import Cat, World
 
 from .conftest import Harness, fast_physics, wait_for
@@ -344,6 +346,88 @@ async def test_follow_doesnt_take_a_far_smaller_look_alike(
     assert [item["following"] for item in view.data["in_view"]] == [False]
     assert "5.3× smaller than the target was" in view.data["in_view"][0]["note"]
     assert "the one in view that looks most like it (match 1.00) is 5.3× smaller" in view.data["summary"]
+    await harness.robot.stop("car-1")
+
+
+def _sighting(match: float = 0.9, *, unsure: bool = False) -> Choice:
+    return Choice(0, match, unsure, f"match {match:.2f}")
+
+
+def _seen(score: float) -> Detection:
+    return Detection("person", score, 0.4, 0.1, 0.6, 0.9)
+
+
+def check(checking: _Checking | None, choice: Choice, score: float, **kw: bool) -> _Checking | None:
+    kw = {"found_again": False, "confirmed": False, **kw}
+    return _check(checking, choice, _seen(score), "person", 0.85, score_drop=0.7, confirm_frames=2, **kw)
+
+
+def test_when_follow_holds_back_and_for_how_long() -> None:
+    assert check(None, _sighting(), 0.8) is None  # what it has been following, as before
+    # Lost and found again: held until two sure sightings in a row.
+    found = check(None, _sighting(), 0.8, found_again=True)
+    assert found is not None and found.why == "it lost sight of the person and has found one again"
+    found = check(found, _sighting(0.5), 0.8)  # not alike enough to count
+    assert found is not None and found.streak == 0
+    found = check(found, _sighting(), 0.8)
+    assert found is not None and found.streak == 1
+    assert check(found, _sighting(), 0.8) is None
+    # A coat rack the detector is far less sure of: held for as long as that lasts.
+    rack = check(None, _sighting(), 0.47)
+    assert rack is not None and rack.why == (
+        "the detector is much less sure this is a person (0.47, against 0.85 before)"
+    )
+    for _ in range(5):
+        rack = check(rack, _sighting(), 0.47)
+    assert rack is not None
+    # A look-alike close by: a reason to hold unless the AI picked this one with both in view.
+    assert check(None, _sighting(unsure=True), 0.8) is not None
+    assert check(None, _sighting(unsure=True), 0.8, confirmed=True) is None
+
+
+# The person follow locks on to, then nobody, then a coat rack where the person was that
+# the detector takes for a person, though far less sure of it.
+def _person_gone_then_rack() -> ScriptedDetector:
+    seen = {"n": 0}
+
+    def script(_jpeg: bytes) -> list[Detection]:
+        seen["n"] += 1
+        if seen["n"] <= 3:
+            return [Detection("person", 0.85, 0.42, 0.2, 0.58, 0.9)]
+        if seen["n"] <= 6:
+            return []
+        return [Detection("person", 0.45, 0.42, 0.2, 0.58, 0.9)]
+
+    return ScriptedDetector(script)
+
+
+@pytest.mark.detector.with_args(_person_gone_then_rack)
+async def test_follow_holds_back_until_it_is_sure_or_the_ai_confirms(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scout.robot.robot.describe", lambda _image, _det: np.full(60, 1 / 20))
+    await harness.connect(world=cat_world())
+    await harness.robot.follow("car-1", target="person", seconds=30)
+    await wait_for(lambda: bool(follow_state(harness).get("checking")), within=6)
+    assert follow_state(harness)["checking"] == "it lost sight of the person and has found one again"
+    for _ in range(5):  # far away, but it doesn't drive towards it
+        step = follow_state(harness)["last_step"]
+        assert isinstance(step, dict) and step["vx"] == 0, step
+        await asyncio.sleep(0.2)
+    assert "not driving until it's sure this is the person" in str(step["why"])
+    view = await harness.robot.follow_view("car-1")
+    assert view.data["follow"]["checking"] == "it lost sight of the person and has found one again"
+    assert "call follow with pick set to 1 to confirm" in view.data["summary"]
+    # The AI looks and confirms it: follow drives again.
+    confirmed = await harness.robot.follow("car-1", pick=1, seconds=30)
+    assert "isn't sure" not in confirmed.data["summary"]
+
+    def drove() -> bool:
+        step = follow_state(harness).get("last_step")
+        return isinstance(step, dict) and str(step["why"]).startswith("forward")
+
+    await wait_for(drove, within=4)
+    assert not follow_state(harness).get("checking")
     await harness.robot.stop("car-1")
 
 

@@ -198,13 +198,17 @@ def plan(
     tilt_deg: float = 0.0,
     tilt_scale: float = 1.0,
     tuning: FollowTuning | None = None,
+    hold: str | None = None,
 ) -> FollowStep:
     """The next step towards ``target``, from a picture taken at a standstill with the
     camera tilt set to ``tilt_deg``. The camera's real angle is ``tilt_deg * tilt_scale``
     (a hobby servo turns a little more or less than it's told); the step's tilt is a
-    setting again."""
+    setting again. ``hold``, when given, says why it mustn't drive now: it still turns and
+    tilts to keep the target in view, but holds where it would drive."""
     t = tuning or FollowTuning()
     move = _move(target, cm, settings, hfov_deg, tilt_deg * tilt_scale, t)
+    if hold is not None and move.vx:
+        move = _hold(hold)
     tilt, tilt_why = _tilt(target, tilt_deg, tilt_scale, hfov_deg, t)
     if tilt is None:
         return move
