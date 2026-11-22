@@ -102,7 +102,23 @@ jobs:
       - name: Type check
         run: uv run mypy
       - name: Test
-        run: uv run pytest --cov=scout --cov=scout_sim --cov-report=term-missing
+        run: uv run pytest --cov=scout --cov=scout_sim --cov-report=term-missing --junitxml=junit.xml
+      - name: Show failing tests on the pull request
+        if: failure()
+        run: |
+          python3 - <<'EOF'
+          import xml.etree.ElementTree as ET
+
+          try:
+              cases = list(ET.parse("junit.xml").iter("testcase"))
+          except (OSError, ET.ParseError) as exc:
+              raise SystemExit(f"no test report: {exc}")
+          for case in cases:
+              for bad in [*case.iter("failure"), *case.iter("error")]:
+                  text = (str(bad.get("message") or "") + "\n" + (bad.text or "")).strip()[-3000:]
+                  text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                  print(f"::error title={case.get('classname')}.{case.get('name')}::{text}")
+          EOF
 
   server-image:
     name: Server image build
