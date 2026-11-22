@@ -111,11 +111,13 @@ Check values (all wheels at equal speed): forward `163`, back `92`, strafe left 
 strafe right `149`, forward-left `34`, forward-right `129`, back-left `72`,
 back-right `20`, clockwise `172`, counter-clockwise `83`, stop `0`.
 
-The shield has only two speed (PWM) pins, D5 and D6, for four wheels, and which wheels
-each pin controls has not been measured yet. Until it is, the firmware drives both
-pins with the same duty and switches off any wheel below a quarter of the fastest wheel
-on its PWM pin (`speed × 4 < fastest`, so exactly 25 % still drives). That's exact for
-the pure moves listed above and approximate for blended ones. A switched-off wheel has
-both direction lines low while its driver is enabled by the shared PWM, so the L293D
-brakes it rather than letting it spin freely (the vendor's diagonal moves do the same).
-The `TEST` message exists to measure the real mapping on the bench.
+The shield has only two speed (PWM) pins for four wheels. On the AD176, D5 drives the
+two right wheels and D6 the two left ones (measured on the bench with `TEST`). The
+firmware gives each pin the duty of the fastest wheel on its side and switches off any
+wheel below a quarter of that (`speed × 4 < fastest`, so exactly 25 % still drives).
+That's exact for the pure moves listed above and for any mix of forward/back and
+turning; a mix that includes strafing is approximate, because the two wheels on a side
+then want different speeds. A switched-off wheel has both direction lines low while its
+driver is enabled by its side's PWM, so the L293D brakes it rather than letting it spin
+freely (the vendor's diagonal moves do the same). A build for a shield wired another
+way can drive both pins with one shared duty instead (`SCOUT_PWM_SPLIT 0`).

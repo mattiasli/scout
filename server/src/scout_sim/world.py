@@ -98,13 +98,13 @@ class Physics:
     noise: float = 0.03  # relative speed error, drawn once per move
     echo_noise_cm: float = 0.8  # ultrasonic reading error, uniform within ±this
     # How the UNO drives its two PWM pins (firmware/scout_uno/src/core/config.h):
-    # "shared" (SCOUT_PWM_SPLIT 0, the default build): both pins carry the fastest wheel's
-    # duty. "split" (SCOUT_PWM_SPLIT 1): each pin drives one side at that side's fastest
-    # wheel. In both, a wheel below 1/coast_divisor of its pin's fastest wheel coasts.
-    # "ideal": every wheel runs at its own mixed speed, as if each had its own PWM pin.
-    pwm_model: PwmModel = "shared"
+    # "split" (SCOUT_PWM_SPLIT 1, the default build): each pin drives one side at that
+    # side's fastest wheel. "shared" (SCOUT_PWM_SPLIT 0): both pins carry the fastest
+    # wheel's duty. In both, a wheel below 1/coast_divisor of its pin's fastest wheel
+    # coasts. "ideal": every wheel runs at its own mixed speed, as if each had its own pin.
+    pwm_model: PwmModel = "split"
     coast_divisor: int = 4  # kCoastDivisor: 4 = 25 %
-    pwm5_left: bool = True  # the wiring: D5 drives the left wheels, D6 the right ones
+    pwm5_left: bool = False  # the AD176's wiring: D5 drives the right wheels, D6 the left ones
     car_radius: float = 12.0  # for collisions
     sensor_offset: float = 10.0  # ultrasonic and camera, ahead of the turning centre
 
@@ -161,7 +161,7 @@ def wheel_bits(wheels: Wheels) -> int:
     return bits
 
 
-def bits_wheels(bits: int, pwm5: int, pwm6: int, *, pwm5_left: bool = True) -> Wheels:
+def bits_wheels(bits: int, pwm5: int, pwm6: int, *, pwm5_left: bool = False) -> Wheels:
     """Wheel speeds for a raw TEST. ``pwm5_left`` says which wheels each pin drives; on
     the real car that mapping is what TEST exists to find out."""
     left, right = (pwm5, pwm6) if pwm5_left else (pwm6, pwm5)

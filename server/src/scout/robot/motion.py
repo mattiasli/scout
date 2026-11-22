@@ -36,10 +36,10 @@ def direction_velocity(direction: str, speed: int) -> tuple[int, int, int]:
     return round(fx * speed), round(fy * speed), 0
 
 
-# How the UNO drives its two PWM pins (firmware/scout_uno/src/core/config.h). "shared"
-# (SCOUT_PWM_SPLIT 0, the default build): both pins carry the fastest wheel's duty.
-# "split": one pin per side. "ideal": every wheel at its own speed, which the stock
-# shield can't do.
+# How the UNO drives its two PWM pins (firmware/scout_uno/src/core/config.h). "split"
+# (SCOUT_PWM_SPLIT 1, the default build): one pin per side, which is how the AD176 is
+# wired. "shared" (SCOUT_PWM_SPLIT 0): both pins carry the fastest wheel's duty.
+# "ideal": every wheel at its own speed, which the stock shield can't do.
 PwmLayout = Literal["shared", "split", "ideal"]
 
 # kCoastDivisor: a wheel below a quarter of the fastest wheel on its pin coasts.
@@ -65,7 +65,7 @@ def wheel_mix(vx: int, vy: int, wz: int) -> Wheels:
     return scaled(raw[0]), scaled(raw[1]), scaled(raw[2]), scaled(raw[3])
 
 
-def wheel_output(vx: int, vy: int, wz: int, layout: PwmLayout = "shared") -> Wheels:
+def wheel_output(vx: int, vy: int, wz: int, layout: PwmLayout = "split") -> Wheels:
     """What each wheel actually runs at, following the UNO's ``mecanumOutput``.
 
     Every driven wheel turns at the duty of the fastest wheel on its pin, and a wheel
@@ -108,7 +108,7 @@ class Estimate:
 
 
 def estimate(
-    vx: int, vy: int, wz: int, ms: int, settings: CarSettings, *, layout: PwmLayout = "shared"
+    vx: int, vy: int, wz: int, ms: int, settings: CarSettings, *, layout: PwmLayout = "split"
 ) -> Estimate:
     """Dead reckoning for one move from what the wheels actually do on the UNO."""
     bvx, bvy, bwz = body_velocity(wheel_output(vx, vy, wz, layout))

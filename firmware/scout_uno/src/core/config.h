@@ -6,15 +6,15 @@
 
 #include <stdint.h>
 
-// PWM wiring. The shield has two speed pins (D5, D6) for four wheels, and which wheels
-// each pin drives hasn't been measured yet (run `tools/bench.py pwmmap`).
+// PWM wiring. The shield has two speed pins (D5, D6) for four wheels. Measured on the
+// AD176 (`tools/bench.py pwmmap`): D5 drives the two right wheels and D6 the two left ones.
 //   0: shared. Both pins carry the same duty, that of the fastest wheel.
 //   1: split. Each pin drives one side of the car; SCOUT_PWM5_LEFT says which side D5 is.
 #ifndef SCOUT_PWM_SPLIT
-#define SCOUT_PWM_SPLIT 0
+#define SCOUT_PWM_SPLIT 1
 #endif
 #ifndef SCOUT_PWM5_LEFT
-#define SCOUT_PWM5_LEFT 1  // only used when SCOUT_PWM_SPLIT is 1: 1 = D5 left, 0 = D5 right
+#define SCOUT_PWM5_LEFT 0  // only used when SCOUT_PWM_SPLIT is 1: 1 = D5 left, 0 = D5 right
 #endif
 
 namespace scout {
@@ -44,12 +44,12 @@ const int32_t kLinkMaxMs = 5000;
 // (both direction lines low; with the driver enabled that brakes it). 4 = 25 %.
 const uint8_t kCoastDivisor = 4;
 
-// Tilt servo (KS-9GMS, SG90 class). Servo angle = 90 + tilt; 90 is level and a lower
-// angle tilts the camera down. The mechanical limits haven't been checked on the car,
-// so the range is kept conservative.
+// Tilt servo (KS-9GMS, SG90 class). Servo angle = kServoLevelAngle + tilt; a lower angle
+// tilts the camera down. On the AD176 the camera points about 9 degrees up at servo angle
+// 90, so level is 81 (measured on the bench).
 const int8_t kTiltMinDeg = -40;
 const int8_t kTiltMaxDeg = 40;
-const int16_t kServoLevelAngle = 90;
+const int16_t kServoLevelAngle = 81;
 // Pulse widths for 0 and 180 degrees: the same mapping as the Arduino Servo library, so
 // "90" puts the horn where the vendor's sketches put it.
 const uint16_t kServoPulseAt0Us = 544;
