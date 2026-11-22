@@ -65,7 +65,7 @@ and the grok CLI.
 | `look_around` | Turns in steps and returns all the views in one picture |
 | `capture_photo` | Saves a full-size photo to a capture set you can download |
 | `capture_orbit` | Circles the object in front and photographs it from all sides |
-| `follow` | Follows a cat, dog or person for a while |
+| `follow` | Follows something of a detector class (a person, cat, dog, ball...) for a while, in short steps; it follows the class, not a particular one |
 | `release_car` | Lets someone else drive |
 
 ## Repository layout

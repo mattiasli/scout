@@ -319,12 +319,20 @@ TOOLS: list[ToolSpec] = [
         name="follow",
         title="Follow",
         description=(
-            "Follow a target such as a cat, dog or person, using object detection on the camera "
-            "picture: the car turns to keep the target in view and keeps a safe distance. It starts "
-            "in the background and returns at once. It follows for up to `seconds` "
-            f"({_span(FOLLOW_SECONDS)}, default {FOLLOW_SECONDS_DEFAULT}), until the target has been "
-            "out of sight for about 3 seconds, or until you call stop or send any move. Check "
-            "progress with status."
+            "Follow something of one of the detector's object classes (a person, cat, dog, sports "
+            "ball and so on), using object detection on the camera picture. It follows a class, not "
+            "a particular one: it starts with the biggest match in view, then keeps to the one nearest "
+            "where it last saw it, so it can't tell two people or two cats apart, and it can't follow "
+            "anything outside the list. It moves in short steps, each decided from a picture taken "
+            "while the car stands still: it turns towards the target, then drives to keep a distance "
+            "(about 60 cm from something that fits the picture, like a cat; about 1.2 m from a "
+            "standing person, judged by shoulder width because the low camera can't see the head). "
+            "It never drives forward towards anything the distance sensor sees close by. The car "
+            "is slow, so it can't keep up with someone walking. It starts in the background and "
+            f"returns at once. It follows for up to `seconds` ({_span(FOLLOW_SECONDS)}, default "
+            f"{FOLLOW_SECONDS_DEFAULT}), until the target has been out of sight for about 3 seconds, "
+            "or until you call stop or send any move. Status shows what it last saw and why it "
+            "moved or held still."
         ),
         properties={
             "target": _enum(

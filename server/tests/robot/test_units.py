@@ -30,7 +30,7 @@ from scout.robot.detector import (
     normalise_label,
 )
 from scout.robot.errors import error_for_code
-from scout.robot.follow import FollowTuning, command, pick_target
+from scout.robot.follow import FollowTuning, bearing_deg, pick_target, plan
 from scout.robot.imaging import jpeg_size, labelled_grid, preview
 from scout.robot.motion import (
     PlannedMove,
@@ -448,20 +448,64 @@ def box(
     return Detection(label, score, cx - 0.1, bottom - height, cx + 0.1, bottom)
 
 
-def test_follow_command() -> None:
-    assert command(box(0.5, 0.45), cm=80, obst_cm=15) == (0, 0, 0)  # centred, right size
-    vx, _, wz = command(box(0.5, 0.15), cm=200, obst_cm=15)
-    assert 25 <= vx <= 45 and wz == 0  # far: drive
-    vx, _, wz = command(box(0.5, 0.75), cm=30, obst_cm=15)
-    assert -30 <= vx <= -25 and wz == 0  # too close: back off
-    vx, _, wz = command(box(0.95, 0.2), cm=200, obst_cm=15)
-    assert vx == 0 and 25 <= wz <= 40  # well off to the right: turn clockwise first
-    vx, _, wz = command(box(0.1, 0.45), cm=200, obst_cm=15)
-    assert wz < 0
-    assert command(box(0.5, 0.15), cm=20, obst_cm=15)[0] == 0  # never closer than obst + clearance
-    assert command(box(0.5, 0.2, bottom=0.99), cm=200, obst_cm=15)[0] == 0  # cut off at the bottom
-    vx, _, wz = command(box(0.7, 0.15), cm=200, obst_cm=15, tuning=FollowTuning(blend=True))
-    assert vx > 0 and wz > 0
+def test_follow_bearing() -> None:
+    assert bearing_deg(box(0.5, 0.4), 66) == 0
+    assert bearing_deg(box(1.0, 0.4), 66) == pytest.approx(33)  # the picture's right edge
+    assert bearing_deg(box(0.0, 0.4), 66) == pytest.approx(-33)
+    assert bearing_deg(box(0.75, 0.4), 66) == pytest.approx(
+        math.degrees(math.atan(0.5 * math.tan(math.radians(33))))
+    )
+
+
+def test_follow_plan_turns_part_of_the_angle_first() -> None:
+    s = CarSettings()  # 180°/s at 100 %; 20 % turns at 76°/s
+    step = plan(box(0.95, 0.2), 200, s, hfov_deg=66)  # 30° right: turn 60 % of it, nothing else
+    angle = bearing_deg(box(0.95, 0.2), 66)
+    assert (step.vx, step.wz) == (0, 20) and step.moves
+    assert step.ms == round(0.6 * angle / turn_rate(20, s) * 1000)
+    assert step.why.startswith("turn 18° right: the cat is 30° off centre")
+    step = plan(box(0.1, 0.45), 200, s, hfov_deg=66)
+    assert step.vx == 0 and step.wz == -20 and "left" in step.why
+    # Within 5° of the middle counts as centred, so it goes on to the distance.
+    assert plan(box(0.53, 0.45), 80, s, hfov_deg=66).why.startswith("hold: the cat is centred")
+    # The shortest pulse (40 ms) is only used when it doesn't turn past the target.
+    fast = CarSettings(turn_deg_per_s=720)  # 304°/s at 20 %: 40 ms turns 12°
+    near = 0.5 + math.tan(math.radians(6)) / math.tan(math.radians(33)) / 2  # 6° right
+    assert plan(box(near, 0.45), 80, fast, hfov_deg=66).wz == 0
+    wider = 0.5 + math.tan(math.radians(15)) / math.tan(math.radians(33)) / 2  # 15° right
+    assert plan(box(wider, 0.45), 80, fast, hfov_deg=66).ms == 40
+    # Today's floor run: the person 8° left of centre, at min_pwm 110 and 202°/s.
+    car = CarSettings(min_pwm=110, turn_deg_per_s=202, forward_cm_per_s=43.5)
+    seen = Detection("person", 0.76, 0.33, 0.0, 0.45, 0.52)
+    step = plan(seen, None, car, hfov_deg=66)
+    assert step.wz == -20 and turn_rate(20, car) * step.ms / 1000 < abs(bearing_deg(seen, 66))
+
+
+def test_follow_plan_drives_to_the_target_size() -> None:
+    s = CarSettings()  # 30 cm/s forward at 100 %
+    step = plan(box(0.5, 0.45), 80, s, hfov_deg=66)
+    assert not step.moves and step.ms == 0 and step.why.startswith("hold:")  # centred, right size
+    step = plan(box(0.5, 0.15), 200, s, hfov_deg=66)  # three times too far: 30 cm (the cap)
+    assert (step.vx, step.wz) == (40, 0)
+    assert step.ms == round(30 / (30 * speed_share(40, 90)) * 1000)
+    step = plan(box(0.5, 0.75), 30, s, hfov_deg=66)  # too close: back 0.4 × 60 cm × 0.6
+    assert (step.vx, step.wz) == (-30, 0)
+    assert step.ms == round(0.4 * 60 * 0.6 / (30 * speed_share(30, 90)) * 1000)
+    # Never towards something within obst_cm + clearance, nor past it.
+    assert plan(box(0.5, 0.15), 20, s, hfov_deg=66).why == "hold: something is 20 cm ahead"
+    step = plan(box(0.5, 0.15), 40, s, hfov_deg=66)
+    assert step.ms == round(15 / (30 * speed_share(40, 90)) * 1000)
+    # Cut off at the bottom: closer than it looks, so no forward.
+    assert not plan(box(0.5, 0.2, bottom=0.99), 200, s, hfov_deg=66).moves
+    # A standing person cut off at the top keeps half the picture's height at any
+    # distance, so the width decides (the first floor run held still on the height).
+    far = Detection("person", 0.9, 0.45, 0.0, 0.55, 0.5)  # 0.10 wide
+    right = Detection("person", 0.9, 0.375, 0.0, 0.625, 0.5)  # 0.25 wide
+    close = Detection("person", 0.9, 0.3, 0.0, 0.7, 0.5)  # 0.40 wide
+    assert plan(far, None, s, hfov_deg=66).vx == 40 and "width 0.10" in plan(far, None, s, hfov_deg=66).why
+    assert plan(right, None, s, hfov_deg=66).why.startswith("hold: the person is centred")
+    assert plan(close, None, s, hfov_deg=66).vx == -30
+    assert FollowTuning().target_width == 0.25
 
 
 def test_pick_target_tracks_the_previous_one() -> None:

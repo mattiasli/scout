@@ -47,7 +47,7 @@ from scout.robot.detector import (
 )
 from scout.robot.errors import InvalidRequest, LinkClosed, ReplyTimeout, clean_text, error_for_code
 from scout.robot.follow import FollowTuning, pick_target
-from scout.robot.follow import command as follow_command
+from scout.robot.follow import plan as follow_plan
 from scout.robot.imaging import jpeg_size, labelled_grid, preview
 from scout.robot.link import (
     CLOSE_ADMIN,
@@ -280,6 +280,11 @@ class _LatestFrame:
         self._event.clear()
         frame, self._frame = self._frame, None
         return frame
+
+    def clear(self) -> None:
+        """Drop the frame waiting, so the next one comes after this moment."""
+        self._frame = None
+        self._event.clear()
 
 
 # -- the robot ---------------------------------------------------------------------
@@ -1568,10 +1573,10 @@ class Robot:
         out["frames"] = f.get("frames", 0)
         out["moves"] = f.get("moves", 0)
         if f.get("last_target"):
-            # Box in 0..1 of the picture (centre across, top and bottom down) and the
-            # move that frame gave; all zero means it held still.
+            # The box in 0..1 of the picture (left and right across, top and bottom down)
+            # and the step that frame gave, with why; ms 0 means it held still.
             out["last_target"] = f["last_target"]
-            out["last_command"] = f.get("last_command")
+            out["last_step"] = f.get("last_step")
         if f.get("obstacle_stops"):
             out["obstacle_stops"] = f["obstacle_stops"]
         if f.get("ended_because"):
@@ -1677,17 +1682,22 @@ class Robot:
                 seen = True
                 last_seen = time.monotonic()
                 info["last_seen"] = time.time()
-                vx, vy, wz = follow_command(det, car.telemetry.get("cm"), settings.obst_cm, tuning)
+                step = follow_plan(
+                    det, car.telemetry.get("cm"), settings, hfov_deg=cfg.camera_hfov_deg, tuning=tuning
+                )
                 # What it saw and decided last, for status: it explains a car that holds still.
                 info["last_target"] = {
-                    "centre": round(det.cx, 2),
+                    "left": round(det.x0, 2),
+                    "right": round(det.x1, 2),
                     "top": round(det.y0, 2),
                     "bottom": round(det.y1, 2),
+                    "centre": round(det.cx, 2),
+                    "width": round(det.width, 2),
                     "height": round(det.height, 2),
                     "score": round(det.score, 2),
                 }
-                info["last_command"] = {"vx": vx, "vy": vy, "wz": wz}
-                if not (vx or vy or wz):
+                info["last_step"] = {"vx": step.vx, "wz": step.wz, "ms": step.ms, "why": step.why}
+                if not step.moves:
                     continue
                 try:
                     async with asyncio.timeout(1.0):
@@ -1697,10 +1707,17 @@ class Robot:
                 try:
                     if beh.interrupted or link.closed:
                         continue
-                    await link.fire("move", on_reply, vx=vx, vy=vy, wz=wz, ms=cfg.follow_move_ms)
+                    await link.fire("move", on_reply, vx=step.vx, vy=0, wz=step.wz, ms=step.ms)
                     info["moves"] = info.get("moves", 0) + 1
                 finally:
                     car.lock.release()
+                # Look again only once the car has stopped and the picture has settled:
+                # a frame taken while moving shows where the target was, not where it is.
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(step.ms / 1000 + cfg.follow_settle_s):
+                        await beh.interrupt.wait()
+                frames.clear()
+                last_seen = max(last_seen, time.monotonic())  # it wasn't looking meanwhile
         except LinkClosed:
             reason = f"{name} disconnected"
         except (CarError, CarOffline, CarBusy) as exc:
