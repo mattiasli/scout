@@ -104,10 +104,18 @@ async def test_follow_ends_when_time_is_up(harness: Harness) -> None:
 
 @pytest.mark.detector.with_args(lambda: ScriptedDetector(lambda _jpeg: []))
 async def test_follow_gives_up_when_nothing_is_seen(harness: Harness) -> None:
-    await harness.connect()
-    await harness.robot.follow("car-1", seconds=30)
-    await wait_for(lambda: follow_state(harness).get("state") == "ended", within=4)
-    assert follow_state(harness)["ended_because"] == "it couldn't see the cat for more than 0.8 seconds"
+    car = await harness.connect()
+    heading = car.world.car.heading
+    started = await harness.robot.follow("car-1", seconds=30)
+    assert started.data["state"] == "searching"
+    assert "is turning to look for it" in started.data["summary"]
+    assert started.images == []
+    await wait_for(lambda: follow_state(harness).get("state") == "ended", within=10)
+    follow = (await harness.robot.status("car-1")).data["follow"]
+    assert follow["ended_because"] == "it couldn't find a cat after turning 120° to look"
+    assert follow["moves"] == 3 and follow["searches"] == 1 and follow["found_again"] == 0
+    turned = math.degrees(heading - car.world.car.heading) % 360  # turning right lowers the heading
+    assert 60 < turned < 180, turned
     assert harness.robot.car("car-1").activity is None  # type: ignore[union-attr]
 
 
@@ -124,12 +132,31 @@ def _flaky_cat() -> ScriptedDetector:
 
 
 @pytest.mark.detector.with_args(_flaky_cat)
-async def test_follow_ends_after_losing_the_target(harness: Harness) -> None:
+async def test_follow_searches_after_losing_the_target(harness: Harness) -> None:
     await harness.connect()
-    await harness.robot.follow("car-1", seconds=30)
-    await wait_for(lambda: follow_state(harness).get("state") == "ended", within=4)
-    assert follow_state(harness)["ended_because"] == "it lost sight of the cat for more than 0.8 seconds"
+    started = await harness.robot.follow("car-1", seconds=30)
+    assert started.data["state"] == "following"
+    assert len(started.images) == 1  # the picture it locked on in
+    assert "locked on to the biggest cat in view, number 1 in the green box" in started.data["summary"]
+    await wait_for(lambda: follow_state(harness).get("state") == "searching", within=4)
+    steps: list[str] = []
+
+    def record() -> bool:
+        step = follow_state(harness).get("last_step")
+        if isinstance(step, dict) and (not steps or steps[-1] != step["why"]):
+            steps.append(step["why"])
+        return follow_state(harness).get("state") == "ended"
+
+    await wait_for(record, within=15)
+    assert (
+        follow_state(harness)["ended_because"]
+        == "it lost sight of the cat and didn't find it after turning 120°"
+    )
     assert follow_state(harness)["last_seen"] is not None
+    # It vanished in the middle of the picture: it looked again, went to where it was, then turned.
+    assert steps[0] == "search: looking again, the cat vanished in the middle of the picture"
+    assert any(why.startswith("search: forward about") for why in steps), steps
+    assert steps[-1].endswith("(120° of 120°)"), steps
 
 
 async def test_motion_command_cancels_follow(harness: Harness) -> None:
@@ -190,5 +217,121 @@ async def test_new_follow_replaces_the_old_one(harness: Harness) -> None:
     await wait_for(lambda: follow_state(harness).get("state") == "following")
     await harness.robot.follow("car-1", target="dog", seconds=60)
     assert follow_state(harness)["target"] == "dog"
-    await wait_for(lambda: follow_state(harness).get("state") == "ended", within=4)  # no dog in the room
+    await wait_for(lambda: follow_state(harness).get("state") == "ended", within=10)  # no dog in the room
     assert harness.robot._detector_users == 0
+
+
+# -------------------------------------------------- following a particular one
+
+
+async def test_find_numbers_what_it_sees_and_follow_takes_the_pick(harness: Harness) -> None:
+    await harness.connect(world=cat_world())
+    found = await harness.robot.find("car-1")
+    assert len(found.images) == 1
+    assert found.data["resolution"] == "640x480"
+    assert [(f["number"], f["label"]) for f in found.data["found"]] == [(1, "cat")]
+    assert found.data["found"][0]["direction"].endswith(("left", "right", "straight ahead"))
+    assert "call follow with pick set to its number" in found.data["summary"]
+    assert harness.robot._detector is None  # dropped straight away with no linger (tests)
+
+    started = await harness.robot.follow("car-1", pick=1, seconds=60)
+    assert started.data["state"] == "following"
+    assert started.data["target"] == "cat"
+    assert "locked on to the one you picked, number 1 in the green box" in started.data["summary"]
+    assert "follow_view" in started.data["summary"]
+    assert len(started.images) == 1
+    assert started.data["in_view"][0]["following"] is True
+
+    view = await harness.robot.follow_view("car-1")
+    assert len(view.images) == 2  # what it acts on, and the cat as it was when picked
+    assert view.data["result"] == "following"
+    assert view.data["picture_age_s"] < 2
+    following = [item for item in view.data["in_view"] if item["following"]]
+    assert len(following) == 1 and following[0]["match"] > 0.6
+    assert "in the green box, number 1" in view.data["summary"]
+    assert "call follow with pick set to a number from this picture" in view.data["summary"]
+    status = (await harness.robot.status("car-1")).data["follow"]
+    assert status["picked"] is True and status["match"] > 0.6 and status["in_view"] == 1
+
+    await harness.robot.stop("car-1")
+    await wait_for(lambda: follow_state(harness).get("state") == "ended")
+    ended = await harness.robot.follow_view("car-1")
+    assert ended.data["result"] == "ended"
+    assert ended.data["summary"].startswith("Follow ended: stop was requested.")
+
+
+async def test_pick_needs_a_recent_numbered_picture(harness: Harness) -> None:
+    await harness.connect(world=cat_world())
+    view = await harness.robot.follow_view("car-1")
+    assert view.data["result"] == "not following" and view.images == []
+    with pytest.raises(InvalidRequest, match="Call find first"):
+        await harness.robot.follow("car-1", pick=1)
+    found = await harness.robot.find("car-1", target="dog")
+    assert found.data["found"] == []
+    assert found.data["summary"] == "No dog found in the picture. Turn, tilt or move and try again."
+    with pytest.raises(InvalidRequest, match="There's no number 1 in the last picture: it had none"):
+        await harness.robot.follow("car-1", pick=1)
+    await harness.robot.find("car-1", target="cat")
+    with pytest.raises(InvalidRequest, match="There's no number 2 in the last picture: it had only number 1"):
+        await harness.robot.follow("car-1", pick=2)
+    harness.robot.config.follow_pick_valid_s = 0.01
+    await asyncio.sleep(0.05)  # Windows' monotonic clock moves in 15 ms ticks
+    with pytest.raises(InvalidRequest, match="Call find first"):
+        await harness.robot.follow("car-1", pick=1)
+    with pytest.raises(InvalidRequest, match="find can't recognise 'unicorn'"):
+        await harness.robot.find("car-1", target="unicorn")
+    assert harness.robot.car("car-1").activity is None  # type: ignore[union-attr]
+    assert harness.robot._detector_users == 0
+
+
+# Two people side by side, the same size; the one on the right stands centred at the
+# distance follow keeps, so following it the car holds still.
+TWO_PEOPLE = [
+    Detection("person", 0.9, 0.02, 0.1, 0.28, 0.9),
+    Detection("person", 0.8, 0.37, 0.1, 0.63, 0.9),
+]
+
+
+@pytest.mark.detector.with_args(lambda: ScriptedDetector(lambda _jpeg: list(TWO_PEOPLE)))
+async def test_follow_keeps_to_the_one_picked_and_can_switch(harness: Harness) -> None:
+    await harness.connect(world=cat_world())
+    found = await harness.robot.find("car-1", target="person")
+    assert [f["number"] for f in found.data["found"]] == [1, 2]  # numbered left to right
+    started = await harness.robot.follow("car-1", pick=2, seconds=60)
+    assert [item["following"] for item in started.data["in_view"]] == [False, True]
+    view = await harness.robot.follow_view("car-1")
+    assert [item["following"] for item in view.data["in_view"]] == [False, True]
+    assert view.data["follow"]["in_view"] == 2
+    # Wrong one: switch to number 1 in follow_view's picture.
+    switched = await harness.robot.follow("car-1", pick=1, seconds=60)
+    assert [item["following"] for item in switched.data["in_view"]] == [True, False]
+    assert switched.data["target"] == "person"
+    # Taking over: any move ends it and hands the car back.
+    moved = await harness.robot.move("car-1", direction="back", ms=200)
+    assert moved.data["result"] == "completed"
+    assert follow_state(harness)["ended_because"] == "a new command arrived"
+
+
+async def test_follow_searches_for_a_target_out_of_sight(harness: Harness) -> None:
+    world = cat_world()
+    # The cat is about 75° to the car's right: out of the picture, which is 81° across.
+    bearing = math.degrees(math.atan2(172 - 150, 240 - 110))
+    world.place_car(110, 150, bearing + 75)
+    await harness.connect(world=world)
+    started = await harness.robot.follow("car-1", seconds=60)
+    assert started.data["state"] in ("searching", "following")
+    await wait_for(lambda: follow_state(harness).get("state") == "following", within=10)
+    follow = (await harness.robot.status("car-1")).data["follow"]
+    assert follow["searches"] == 1 and follow["found_again"] == 1
+    view = await harness.robot.follow_view("car-1")
+    assert len(view.images) == 2  # it locked on to the cat it found, so it has a close-up
+    await harness.robot.stop("car-1")
+
+
+async def test_the_model_stays_loaded_for_a_while_after_find(harness: Harness) -> None:
+    harness.robot.config.detector_linger_s = 0.3
+    await harness.connect(world=cat_world())
+    await harness.robot.find("car-1")
+    assert harness.robot._detector is not None
+    await harness.robot.find("car-1")  # reuses it and restarts the wait
+    await wait_for(lambda: harness.robot._detector is None, within=2)

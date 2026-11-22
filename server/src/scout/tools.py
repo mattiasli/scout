@@ -42,6 +42,7 @@ ORBIT_PHOTOS_DEFAULT = 12
 FOLLOW_SECONDS: Range = (5, 300)
 FOLLOW_SECONDS_DEFAULT = 60
 FOLLOW_TARGET_DEFAULT = "cat"
+PICK: Range = (1, 20)  # robot.MAX_PICK: find numbers at most 20 boxes
 # scout/robot/captures.py: capture ids are 12-64 URL-safe characters.
 CAPTURE_ID_PATTERN = "^[A-Za-z0-9_-]{12,64}$"
 # robot.capture_photo keeps at most this much of a note (after collapsing whitespace).
@@ -86,6 +87,9 @@ backward moves are blind, so keep them short.
 - Every move is short and bounded ({MOVE_MS[0]}-{MOVE_MS[1]} ms). Turns are approximate \
 because there is no gyroscope, so check with look.
 - Pass look=true to move, turn and drive to get a picture afterwards in the same call.
+- To follow a particular person or thing, call find to get the objects in view numbered, \
+then follow with pick set to the right number. Check with follow_view now and then that \
+it is still on the right one; pick again or call stop to take over if it isn't.
 - One person drives at a time. Call release_car when you're done; the car is also \
 released after 2 minutes without commands.
 - Call stop at once if anything looks wrong.
@@ -316,35 +320,79 @@ TOOLS: list[ToolSpec] = [
         },
     ),
     ToolSpec(
+        name="find",
+        title="Find objects",
+        description=(
+            "Take a picture and find the objects in it with the object detector (people, cats, dogs, "
+            "balls, chairs and the rest of the 80 COCO classes). Returns the picture with each one "
+            "boxed and numbered left to right, and a list with each one's class, how sure the "
+            "detector is, its direction from straight ahead and its box. Pass target to keep one "
+            "class only. Use it before follow: look at the picture, decide which one is the person "
+            f"or thing you want, and call follow with pick set to its number ({_span(PICK)}). The "
+            "numbers stay valid for 2 minutes. Sizes: small 320x240, medium 640x480 (default), "
+            "large 800x600. It doesn't move the car or the camera."
+        ),
+        properties={
+            "target": _enum(FOLLOW_TARGETS, "Only find this class. Leave out to find everything."),
+            "size": _enum(LOOK_SIZES, "Picture size.", LOOK_SIZE_DEFAULT),
+        },
+        read_only=True,
+    ),
+    ToolSpec(
         name="follow",
         title="Follow",
         description=(
-            "Follow something of one of the detector's object classes (a person, cat, dog, sports "
-            "ball and so on), using object detection on the camera picture. It follows a class, not "
-            "a particular one: it starts with the biggest match in view, then keeps to the one nearest "
-            "where it last saw it, so it can't tell two people or two cats apart, and it can't follow "
-            "anything outside the list. It moves in short steps, each decided from a picture taken "
-            "while the car stands still: it turns towards the target and tilts the camera to keep it "
-            "in view (a person's head and shoulders), then drives to keep a distance (about 60 cm "
-            "from something that fits the picture, like a cat; about 1.2 m from a person, judged by "
-            "the width of their head and shoulders). "
-            "It never drives forward towards anything the distance sensor sees close by. The car "
-            "is slow, so it can't keep up with someone walking. It starts in the background and "
-            f"returns at once. It follows for up to `seconds` ({_span(FOLLOW_SECONDS)}, default "
-            f"{FOLLOW_SECONDS_DEFAULT}), until the target has been out of sight for about 3 seconds, "
-            "or until you call stop or send any move. Status shows what it last saw and why it "
-            "moved or held still."
+            "Follow a particular person or thing with the camera and the wheels. Call find first and "
+            f"pass pick, the number of the one to follow in find's picture ({_span(PICK)}); its class "
+            "replaces target. Without pick it follows the biggest `target` in view, or turns to look "
+            "for one. It remembers what the one it follows looks like (the colours of its top and "
+            "bottom halves) and keeps to the candidate that looks most like it, so it doesn't switch "
+            "to someone else who walks past. Two people dressed alike can still fool it: check with "
+            "follow_view. It moves in short steps, each decided from a picture taken while the car "
+            "stands still: it turns towards the target and tilts the camera to keep it in view (a "
+            "person's head and shoulders), then drives to keep a distance (about 60 cm from "
+            "something that fits the picture, like a cat; about 1.2 m from a person, judged by the "
+            "width of their head and shoulders). When the target goes out of sight it searches: it "
+            "turns towards the side it went out, tilts if it went out at the top or bottom, or "
+            "drives a short way towards where it vanished, then turns round looking for it, up to a "
+            "full circle. It never drives forward towards anything the distance sensor sees close "
+            "by, and the car is slow, so it can't keep up with someone walking. It runs in the "
+            "background: the call returns once it has locked on, with the picture it locked on in "
+            "(the target in a green box), and it follows for up to `seconds` "
+            f"({_span(FOLLOW_SECONDS)}, default {FOLLOW_SECONDS_DEFAULT}). It ends when the time is "
+            "up, when a search finds nothing, or when you call stop or send any move, which also "
+            "hands the car back to you. Calling follow again with a new pick switches target."
         ),
         properties={
             "target": _enum(
                 FOLLOW_TARGETS,
-                "What to follow: one of the object classes the detector knows (the 80 COCO classes).",
+                "What to follow when there's no pick: one of the 80 COCO object classes.",
                 FOLLOW_TARGET_DEFAULT,
             ),
             "seconds": _int(
                 FOLLOW_SECONDS, "The longest time to follow, in seconds.", FOLLOW_SECONDS_DEFAULT
             ),
+            "pick": _int(
+                PICK,
+                "The number of the one to follow, from the latest find or follow_view picture "
+                f"({_span(PICK)}). Leave out to follow the biggest target in view.",
+            ),
         },
+    ),
+    ToolSpec(
+        name="follow_view",
+        title="Follow view",
+        description=(
+            "See what follow sees: the latest picture it acted on, with the one it follows in a green "
+            "box marked 'following' and other candidates of the same class numbered in yellow, plus "
+            "a second picture of the target as it looked when follow locked on. Compare them to "
+            "check it is following the right one. If it isn't, call follow with pick set to the "
+            "right number in this picture to switch, or call stop or any move to take over. Also "
+            "returns how alike the target looks to the original (match, 0 to 1), whether another "
+            "candidate looks almost as alike, whether it is searching and what it did last. It "
+            "doesn't move the car."
+        ),
+        read_only=True,
     ),
     ToolSpec(
         name="release_car",

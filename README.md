@@ -15,7 +15,8 @@ on the same WiFi network as the car.
 - **Check on the house.** "Is the front door closed?"
 - **Gather pictures for 3D modelling.** Scout circles an object and saves full-size
   photos you can download and use in Blender.
-- **Follow the cat** (gently, and not too close).
+- **Follow someone.** Point at the person (or the cat) in the picture and Scout keeps to
+  that one, gently and not too close, and looks for them if they leave the picture.
 - **Just drive it around.** It has mecanum wheels, so it can move sideways and
   diagonally as well as forwards and back.
 
@@ -65,7 +66,9 @@ and the grok CLI.
 | `look_around` | Turns in steps and returns all the views in one picture |
 | `capture_photo` | Saves a full-size photo to a capture set you can download |
 | `capture_orbit` | Circles the object in front and photographs it from all sides |
-| `follow` | Follows something of a detector class (a person, cat, dog, ball...) for a while, in short steps; it follows the class, not a particular one |
+| `find` | Takes a picture and numbers the people, pets and objects the detector finds in it |
+| `follow` | Follows the one you picked from `find` (or the biggest of a class), keeping to it by its colours and searching when it goes out of sight |
+| `follow_view` | Shows what `follow` sees, with the one it follows boxed, so the AI can check it and switch or take over |
 | `release_car` | Lets someone else drive |
 
 ## Repository layout

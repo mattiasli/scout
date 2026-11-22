@@ -32,14 +32,18 @@ Steps:
 * **Safety.** Forward is never commanded when the ultrasonic reads within
   ``obst_cm + clearance_cm``, and a step never goes past that. The UNO's own obstacle
   stop backs this up. Backing off is blind, so it is kept short.
+* **Searching.** When the target is out of sight (``Search``), it looks where it went:
+  turns towards the side it left by, tilts if it left at the top or bottom, or, if it
+  vanished in the middle of the picture, looks again and then drives a short way
+  towards where it was. Then it turns round in steps that overlap, up to a full circle.
 
 Every move is a pure one (a turn in place, or straight forward or back), which the
 two-pin shield drives exactly. Turning comes first; the car only drives once the target
 is near the middle. A tilt can go with either.
 
-The target is the detection ``pick_target`` chooses: the biggest of the right class at
-the start, then whichever is nearest its last position. It follows a class, not a
-particular cat or person.
+Which detection is the target is ``tracker.choose``'s business: the one the AI picked,
+or the biggest at the start, then whichever looks like it (``pick_target`` is the simpler
+choice by position alone).
 """
 
 from __future__ import annotations
@@ -89,6 +93,12 @@ class FollowTuning:
     top_edge: float = 0.02  # a box starting above this is cut off at the top
     bottom_edge: float = 0.97  # one ending below this is cut off at the bottom
     clearance_cm: int = 10
+    # Searching. Turns overlap: the picture is about 81° across.
+    search_turn_deg: float = 40.0
+    search_deg: float = 360.0  # turned without finding it, it gives up
+    search_tilt_deg: float = 15.0
+    search_drive_cm: float = 30.0
+    search_drive_within_deg: float = 25.0  # drives towards it only if it vanished about ahead
 
 
 @dataclass(frozen=True)
@@ -256,3 +266,131 @@ def _move(
     ms = max(t.min_drive_ms, round(step_cm / rate * 1000))
     why = f"back about {step_cm:.0f} cm: the {name} looks close ({cue} {size:.2f})"
     return FollowStep(-t.back_speed, 0, ms, why)
+
+
+def _pixel(
+    yaw_deg: float, elevation_deg: float, hfov_deg: float, tilt_deg: float
+) -> tuple[float, float] | None:
+    """Where a direction appears in the picture, or None if it is behind the camera."""
+    yaw, elevation, t = math.radians(yaw_deg), math.radians(elevation_deg), math.radians(tilt_deg)
+    right = math.sin(yaw) * math.cos(elevation)
+    up = math.sin(elevation)
+    ahead = math.cos(yaw) * math.cos(elevation)
+    forward = ahead * math.cos(t) + up * math.sin(t)  # the level frame turned up by the tilt
+    cam_up = up * math.cos(t) - ahead * math.sin(t)
+    if forward <= 1e-6:
+        return None
+    tx = math.tan(math.radians(hfov_deg / 2))
+    return 0.5 + right / forward / (2 * tx), 0.5 - cam_up / forward / (2 * tx * ASPECT)
+
+
+def expected_position(
+    target: Detection, hfov_deg: float, *, tilt_before: float, tilt_after: float, turned_deg: float
+) -> tuple[float, float] | None:
+    """Where a still target should appear after the car turns ``turned_deg`` (clockwise is
+    positive) and the camera goes from ``tilt_before`` to ``tilt_after`` (real degrees)."""
+    yaw, elevation = _direction(target.cx, target.cy, hfov_deg, tilt_before)
+    return _pixel(yaw - turned_deg, elevation, hfov_deg, tilt_after)
+
+
+def exit_side(target: Detection, *, edge: float = 0.08) -> str:
+    """Where a target last seen as ``target`` most likely left the picture: "left",
+    "right", "top", "bottom", or "middle" when it was nowhere near an edge."""
+    if target.x0 <= edge and target.cx < 0.5:
+        return "left"
+    if target.x1 >= 1 - edge and target.cx > 0.5:
+        return "right"
+    if target.cy < 0.25 and target.y0 <= edge:
+        return "top"
+    if target.cy > 0.75 and target.y1 >= 1 - edge:
+        return "bottom"
+    return "middle"
+
+
+@dataclass
+class Search:
+    """Looking for a target that is out of sight, one step at a time.
+
+    ``side`` is where it left the picture (``exit_side``), or "scan" when it hasn't been
+    seen at all; ``bearing_deg`` is where it was last seen (right is positive).
+    """
+
+    label: str
+    side: str
+    bearing_deg: float = 0.0
+    turned_deg: float = 0.0
+    looked_again: bool = False
+    tilted: bool = False
+    faced: bool = False
+    drove: bool = False
+
+    def next_step(
+        self,
+        cm: int | None,
+        settings: CarSettings,
+        *,
+        tilt_deg: float,
+        tilt_scale: float = 1.0,
+        tuning: FollowTuning | None = None,
+    ) -> FollowStep | None:
+        """The next search step, or None once a full search has found nothing.
+        ``tilt_deg`` is the camera's tilt setting."""
+        t = tuning or FollowTuning()
+        name = self.label
+        if self.side == "middle":
+            if not self.looked_again:
+                self.looked_again = True
+                return FollowStep(
+                    0, 0, 0, f"search: looking again, the {name} vanished in the middle of the picture"
+                )
+            if not self.drove and abs(self.bearing_deg) <= t.search_drive_within_deg:
+                if not self.faced and abs(self.bearing_deg) >= t.centre_deadband_deg:
+                    self.faced = True
+                    side = "right" if self.bearing_deg > 0 else "left"
+                    reason = f"to face where the {name} was last seen"
+                    return self._turn(abs(self.bearing_deg), side, settings, t, reason, count=False)
+                self.drove = True
+                step_cm = t.search_drive_cm
+                if cm is not None:
+                    step_cm = min(step_cm, cm - (settings.obst_cm + t.clearance_cm))
+                if step_cm >= 5:
+                    rate = settings.forward_cm_per_s * speed_share(t.drive_speed, settings.min_pwm)
+                    ms = max(t.min_drive_ms, round(step_cm / rate * 1000))
+                    why = f"search: forward about {step_cm:.0f} cm towards where the {name} was last seen"
+                    return FollowStep(t.drive_speed, 0, ms, why)
+        if self.side in ("top", "bottom") and not self.tilted:
+            self.tilted = True
+            change = t.search_tilt_deg if self.side == "top" else -t.search_tilt_deg
+            new = max(t.tilt_min, min(t.tilt_max, round(tilt_deg + change / tilt_scale)))
+            if new != round(tilt_deg):
+                direction = "up" if new > tilt_deg else "down"
+                why = f"search: tilt {direction} to {new}°, the {name} went out at the {self.side}"
+                return FollowStep(0, 0, 0, why, new)
+        if self.turned_deg >= t.search_deg - 0.5:
+            return None
+        side = self.side if self.side in ("left", "right") else ("left" if self.bearing_deg < 0 else "right")
+        amount = min(t.search_turn_deg, t.search_deg - self.turned_deg)
+        first = self.turned_deg == 0
+        step = self._turn(amount, side, settings, t, "", count=True)
+        # Scan at the tilt the target's class starts with (a person's head height).
+        tilt = None
+        if first and self.side not in ("top", "bottom"):
+            start = start_tilt(name, t)
+            if abs(start - tilt_deg) > 8:
+                tilt = start
+        return FollowStep(step.vx, step.wz, step.ms, step.why, tilt)
+
+    def _turn(
+        self, amount: float, side: str, settings: CarSettings, t: FollowTuning, reason: str, *, count: bool
+    ) -> FollowStep:
+        rate = turn_rate(t.turn_speed, settings)
+        ms = max(t.min_turn_ms, round(amount / rate * 1000))
+        wz = t.turn_speed if side == "right" else -t.turn_speed
+        if count:
+            self.turned_deg += amount
+            if self.side in ("left", "right"):
+                reason = f"where the {self.label} went out of the picture"
+            else:
+                reason = f"looking for the {self.label}"
+            reason += f" ({self.turned_deg:.0f}° of {t.search_deg:.0f}°)"
+        return FollowStep(0, wz, ms, f"search: turn {amount:.0f}° {side}, {reason}")

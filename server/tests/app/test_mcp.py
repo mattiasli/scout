@@ -20,7 +20,7 @@ pytestmark = pytest.mark.anyio
 
 TOOL_NAMES = {
     "status", "look", "move", "turn", "drive", "set_light", "stop", "look_around",
-    "capture_photo", "capture_orbit", "follow", "release_car",
+    "capture_photo", "capture_orbit", "find", "follow", "follow_view", "release_car",
 }  # fmt: skip
 SERVER_LOGGERS = ("scout", "mcp.server", "mcp.shared", "uvicorn", "starlette")
 
