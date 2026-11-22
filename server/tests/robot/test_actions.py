@@ -45,17 +45,20 @@ async def test_move_forward_completes_with_estimates(harness: Harness) -> None:
     assert data["result"] == "completed"
     assert data["reason"] == "time"
     assert data["ms"] == 500
-    assert data["estimated_cm"] == pytest.approx(36.0)  # 120 cm/s × 60 % × 0.5 s
+    # 120 cm/s × 0.71 × 0.5 s: 60 % is duty 188, which turns the motors at (188 − 25)/230
+    # of full speed.
+    assert data["estimated_cm"] == pytest.approx(42.5)
     assert data["distance_before_cm"] == pytest.approx(280, abs=3)
-    assert data["distance_after_cm"] == pytest.approx(244, abs=4)
-    assert car.world.car.x - x0 == pytest.approx(36, abs=3)
+    assert data["distance_after_cm"] == pytest.approx(237.5, abs=4)
+    assert car.world.car.x - x0 == pytest.approx(42.5, abs=3)
     assert "completed" in data["summary"]
     assert result.images == []
 
 
 @pytest.mark.parametrize(
     ("direction", "forward", "right"),
-    [("left", 0.0, -30.0), ("back", -36.0, 0.0), ("forward_right", 25.2, 21.0), ("back_left", -25.2, -21.0)],
+    # Straight: 60 % runs the wheels at 71 %. Diagonal: two wheels at 84 % (88 %), the others still.
+    [("left", 0.0, -35.4), ("back", -42.5, 0.0), ("forward_right", 26.5, 22.1), ("back_left", -26.5, -22.1)],
 )
 async def test_move_directions_match_the_car(
     harness: Harness, direction: str, forward: float, right: float
@@ -87,8 +90,8 @@ async def test_turn_right_and_left(harness: Harness) -> None:
 async def test_drive_raw_and_validation(harness: Harness) -> None:
     car = await harness.connect()
     result = await harness.robot.drive("car-1", vx=0, vy=0, wz=-50, ms=200)
-    assert result.data["estimated"]["clockwise_deg"] == pytest.approx(-72.0)
-    assert angle_diff(heading_deg(car.world), 72) < 3
+    assert result.data["estimated"]["clockwise_deg"] == pytest.approx(-92.0)  # 720°/s × 147/230 × 0.2 s
+    assert angle_diff(heading_deg(car.world), 92) < 3
     for kwargs in ({"vx": 101, "vy": 0, "wz": 0, "ms": 500}, {"vx": 0, "vy": 0, "wz": 0, "ms": 50}):
         with pytest.raises(InvalidRequest):
             await harness.robot.drive("car-1", **kwargs)
@@ -390,7 +393,8 @@ async def test_capture_orbit_backs_off_a_deep_object(robot_config: RobotConfig, 
     assert data["photo_count"] == 4
     readings = [m["cm_end"] for m in car.sent if m.get("t") == "done"]
     assert min(readings) == 14 < harness.settings["car-1"].obst_cm
-    assert [p["distance_cm"] for p in data["photos"]] == [25, 25, 25, 25]  # back on the circle
+    # Back on the circle, within the sensor's noise.
+    assert all(abs(p["distance_cm"] - 25) <= 1 for p in data["photos"]), data["photos"]
     assert corrections(car) == [-30, -30, -30]
     assert_facing_post(car.world, 30, 52)
 

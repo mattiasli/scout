@@ -69,7 +69,7 @@ Moves go through the same mixing as the UNO firmware
 `RL = vx−vy+wz`, `RR = vx+vy−wz` in whole percent, all four scaled by 100/peak (rounded
 toward zero) if one exceeds 100 %. Body motion then comes from mecanum forward
 kinematics. At 100 % the car does 30 cm/s forward, 20 cm/s sideways
-and 180°/s turning. Each move draws a speed error (3 % standard deviation), so dead
+and 180°/s turning (less at lower percentages, see the motor curve below). Each move draws a speed error (3 % standard deviation), so dead
 reckoning drifts the way it does on the real car. Walls, furniture and the cat block
 the car.
 
@@ -90,8 +90,14 @@ any mix of driving and turning: `vx 50, wz 20` gives the left wheels 70 % and th
 ones 30 %, and the car curves. Mixes with strafing lose their small part, because the
 two wheels on a side then want different speeds. With `shared` the same `vx 50, wz 20`
 runs all four at 70 %, so the car goes straight, and `vx 40, wz 30` (70 and 10 %)
-leaves the slow side coasting, so the car pivots. The simulator takes the percentage as
-the wheel speed; the firmware's `min_pwm` offset is there to make that roughly true.
+leaves the slow side coasting, so the car pivots.
+
+Each wheel's percentage becomes a PWM duty the way the firmware maps it (1..100 % onto
+`min_pwm`..255), and the motor turns at a speed proportional to the duty above 25
+(`Physics.zero_speed_pwm`), as measured on the AD176. A duty below 100
+(`Physics.start_pwm`) leaves the wheel still, because every move starts from a
+standstill and the real motors only hum there. The server's estimates use the same
+curve, without the stall.
 
 `TEST` uses the raw bits and duties, with D5 driving the right wheels and D6 the left
 ones as on the real car.

@@ -21,7 +21,8 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request, Response
 
-from scout.robot.motion import PwmLayout, direction_velocity, wheel_output
+from scout.robot.motion import PwmLayout, direction_velocity, speed_share, wheel_output
+from scout.robot.motion import percent_to_pwm as server_percent_to_pwm
 from scout_sim import Cat, Disc, Faults, Physics, SimCar, SimCatDetector, SimConfig, World
 from scout_sim.__main__ import main
 from scout_sim.render import snapshot
@@ -31,11 +32,14 @@ from scout_sim.world import (
     CAT,
     DISC,
     WALL,
-    bits_wheels,
+    bits_duties,
     body_velocity,
     cast_rays,
     drive_wheels,
     mix,
+    motor_speeds,
+    move_duties,
+    percent_to_pwm,
     wheel_bits,
 )
 
@@ -135,9 +139,25 @@ def test_server_estimates_use_the_same_wheel_model() -> None:
 def test_mixing_inverts_and_raw_test_bits() -> None:
     for v in ((60, 0, 0), (0, -40, 0), (0, 0, 30), (20, 15, -10)):
         assert body_velocity(mix(*v)) == pytest.approx(v)
-    assert bits_wheels(163, 153, 153) == pytest.approx((60, 60, 60, 60))
-    assert bits_wheels(106, 255, 0) == pytest.approx((0, 0, 100, -100))  # D6 at 0: left side still
-    assert bits_wheels(106, 255, 0, pwm5_left=True) == pytest.approx((-100, 100, 0, 0))  # D5 on the left
+    assert bits_duties(163, 153, 153) == (153, 153, 153, 153)
+    assert bits_duties(106, 255, 0) == (0, 0, 255, -255)  # D6 at 0: left side still
+    assert bits_duties(106, 255, 0, pwm5_left=True) == (-255, 255, 0, 0)  # D5 on the left
+
+
+def test_motors_follow_the_measured_curve() -> None:
+    p = Physics()
+    # firmware percentToPwm: 1 % is min_pwm, 100 % is 255, linear in between.
+    assert [percent_to_pwm(x, 90) for x in (0, 1, 20, 50, 99, 100)] == [0, 90, 122, 172, 253, 255]
+    assert move_duties((50, -50, 0, 20), 110) == (182, -182, 0, 138)
+    # Speed is proportional to the duty above 25; below 100 a motor doesn't start.
+    assert motor_speeds((255, -140, 99, 100), p) == pytest.approx((100, -50, 0, 75 / 230 * 100))
+    # The server's estimates use the same curve (it leaves out the stall).
+    for min_pwm in (0, 90, 110, 255):
+        for x in range(101):
+            assert percent_to_pwm(x, min_pwm) == server_percent_to_pwm(x, min_pwm)
+            duty = percent_to_pwm(x, min_pwm)
+            if duty >= p.start_pwm:
+                assert motor_speeds((duty, 0, 0, 0), p)[0] == pytest.approx(100 * speed_share(x, min_pwm))
 
 
 def test_car_moves_turns_and_is_blocked_by_walls() -> None:

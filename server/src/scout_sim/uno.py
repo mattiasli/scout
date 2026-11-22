@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from scout_sim.world import ZERO, Wheels, World, bits_wheels, drive_wheels
+from scout_sim.world import ZERO, Wheels, World, bits_duties, drive_wheels, motor_speeds, move_duties
 
 # firmware/scout_uno/src/core/config.h: kTiltMinDeg, kTiltMaxDeg.
 TILT_MIN = -40
@@ -28,7 +28,7 @@ class Run:
     kind: str  # "move" or "test"
     vx: int
     ms: int
-    wheels: Wheels
+    duties: Wheels  # signed PWM duty per wheel
     started: float
     cm_start: int | None
 
@@ -62,8 +62,8 @@ class SimUno:
         return self.run is not None
 
     @property
-    def wheels(self) -> Wheels:
-        return self.run.wheels if self.run is not None else ZERO
+    def duties(self) -> Wheels:
+        return self.run.duties if self.run is not None else ZERO
 
     def host_frame(self, now: float) -> None:
         self.last_host = now
@@ -94,13 +94,13 @@ class SimUno:
 
     def move(self, request_id: int, vx: int, vy: int, wz: int, ms: int, now: float) -> list[Done]:
         self.host_frame(now)
-        wheels = drive_wheels(vx, vy, wz, self.world.physics)
-        return self._start(Run(request_id, "move", vx, ms, wheels, now, self.world.ultrasonic()), now)
+        duties = move_duties(drive_wheels(vx, vy, wz, self.world.physics), self.min_pwm)
+        return self._start(Run(request_id, "move", vx, ms, duties, now, self.world.ultrasonic()), now)
 
     def test(self, request_id: int, bits: int, pwm5: int, pwm6: int, ms: int, now: float) -> list[Done]:
         self.host_frame(now)
-        wheels = bits_wheels(bits, pwm5, pwm6, pwm5_left=self.world.physics.pwm5_left)
-        return self._start(Run(request_id, "test", 0, ms, wheels, now, self.world.ultrasonic()), now)
+        duties = bits_duties(bits, pwm5, pwm6, pwm5_left=self.world.physics.pwm5_left)
+        return self._start(Run(request_id, "test", 0, ms, duties, now, self.world.ultrasonic()), now)
 
     def stop(self, now: float) -> Done | None:
         self.host_frame(now)
@@ -118,7 +118,8 @@ class SimUno:
         if run is None:
             return []
         end = run.started + run.ms / 1000
-        self.world.step_car(run.wheels, min(dt, max(0.0, end - (now - dt))))
+        speeds = motor_speeds(run.duties, self.world.physics)
+        self.world.step_car(speeds, min(dt, max(0.0, end - (now - dt))))
         if now >= end:
             return [self._end("time", now)]
         if run.kind == "move" and run.vx > 0:

@@ -77,7 +77,7 @@
     <label class="check"><input type="checkbox" name="vflip"{% if car.settings.vflip %} checked{% endif %}> Flip the picture vertically</label>
     <label class="check"><input type="checkbox" name="hmirror"{% if car.settings.hmirror %} checked{% endif %}> Mirror the picture</label>
     <h3>Calibration</h3>
-    <p class="muted">Rough speeds at 100 %, measured on the real floor. They turn "turn 90 degrees" into a duration.</p>
+    <p class="muted">Speeds at 100 %, measured on the real floor. They turn "turn 90 degrees" into a duration. Slower percentages are worked out from the lowest motor PWM above: a motor's speed grows with its PWM above about 25.</p>
     <label for="s_turn">Turning (degrees per second)</label>
     <input id="s_turn" name="turn_deg_per_s" type="number" step="any" min="1" max="2000" value="{{ car.settings.turn_deg_per_s }}" required>
     <label for="s_fwd">Forward (cm per second)</label>

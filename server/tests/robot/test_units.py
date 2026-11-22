@@ -38,11 +38,15 @@ from scout.robot.motion import (
     direction_velocity,
     estimate,
     orbit_step,
+    percent_to_pwm,
     radius_correction,
+    speed_share,
     split_ms,
     turn_plan,
+    turn_rate,
     wheel_mix,
     wheel_output,
+    wheel_speeds,
 )
 from scout.robot.text import ago, heading_label, reason_phrase
 
@@ -81,22 +85,49 @@ def test_mixing_follows_the_uno() -> None:
     assert body_velocity(wheel_output(20, 15, -10, "ideal")) == pytest.approx((20, 15, -10))
 
 
+def test_motor_curve() -> None:
+    # firmware percentToPwm (mecanum_test.cpp checks the same values): 0 stays 0, 1 % is
+    # min_pwm, 100 % is 255.
+    duties = [percent_to_pwm(x, 90) for x in (0, 1, 20, 30, 50, 60, 99, 100)]
+    assert duties == [0, 90, 122, 138, 172, 188, 253, 255]
+    assert percent_to_pwm(-50, 90) == 172
+    # Speed is proportional to the duty above 25.
+    assert speed_share(100, 90) == 1.0
+    assert speed_share(0, 90) == 0.0
+    assert speed_share(50, 90) == pytest.approx(147 / 230)
+    assert speed_share(-50, 90) == pytest.approx(-147 / 230)
+    assert speed_share(20, 110) == pytest.approx(113 / 230)
+    assert wheel_speeds((100, -50, 0, 1), 90) == pytest.approx((100, -100 * 147 / 230, 0, 100 * 65 / 230))
+    # The floor runs on the AD176 (forward 20/30/50 % at min_pwm 90, turning 50 % at 90
+    # and 20 % at 110) against the calibration they give: 44 cm/s and 206°/s at 100 %.
+    s = CarSettings(min_pwm=90, forward_cm_per_s=44, turn_deg_per_s=206)
+    for speed, cm_per_s in ((20, 18.8), (30, 21.5), (50, 28.0)):
+        assert estimate(speed, 0, 0, 1000, s).forward_cm == pytest.approx(cm_per_s, rel=0.03)
+    assert turn_rate(50, s) == pytest.approx(132, rel=0.03)
+    assert turn_rate(20, CarSettings(min_pwm=110, turn_deg_per_s=206)) == pytest.approx(100, rel=0.03)
+
+
 def test_estimates_from_calibration() -> None:
-    s = CarSettings()  # 30 cm/s forward, 20 cm/s sideways, 180°/s at 100 %
+    s = CarSettings()  # min_pwm 90; 30 cm/s forward, 20 cm/s sideways, 180°/s at 100 %
+    s50, s60 = 147 / 230, 163 / 230  # duty 172 and 188
     e = estimate(60, 0, 0, 1000, s)
-    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((18, 0, 0))
+    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((30 * s60, 0, 0))
     e = estimate(0, -50, 0, 2000, s)
-    assert e.right_cm == pytest.approx(-20)
-    e = estimate(42, 42, 0, 1000, s)
-    assert e.distance_cm == pytest.approx(math.hypot(12.6, 8.4))
-    assert estimate(0, 0, 50, 1000, s).clockwise_deg == pytest.approx(90)
+    assert e.right_cm == pytest.approx(-40 * s50)
+    e = estimate(42, 42, 0, 1000, s)  # a diagonal: FL and RR at 84 % (duty 228), the others still
+    assert e.distance_cm == pytest.approx(math.hypot(30, 20) / 2 * 203 / 230)
+    assert estimate(0, 0, 50, 1000, s).clockwise_deg == pytest.approx(180 * s50)
     assert estimate(100, 0, 100, 1000, s).forward_cm == pytest.approx(15)  # scaled to fit
     # A blend is estimated the way the shield drives it. With the shared duty all four
-    # wheels run at 70 %, so it goes straight; one pin per side keeps the turn.
+    # wheels run at 70 % (duty 205), so it goes straight; one pin per side keeps the turn
+    # (the left side at 70 %, the right at 30 %, duty 138).
     e = estimate(50, 0, 20, 1000, s, layout="shared")
-    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((21, 0, 0))
+    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((30 * 180 / 230, 0, 0))
     e = estimate(50, 0, 20, 1000, s)
-    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx((15, 0, 36))
+    left, right = 180 / 230, 113 / 230
+    assert (e.forward_cm, e.right_cm, e.clockwise_deg) == pytest.approx(
+        (30 * (left + right) / 2, 0, 180 * (left - right) / 2)
+    )
     assert estimate(50, 0, 20, 1000, s, layout="ideal") == e
     # A pure move is the same whatever the layout.
     for layout in ("shared", "split", "ideal"):
@@ -109,20 +140,26 @@ def test_split_and_turn_plans() -> None:
     assert all(c <= 3000 for c in split_ms(9999))
     assert sum(split_ms(9999)) == 9999
     s = CarSettings()
+    assert turn_rate(50, s) == pytest.approx(180 * 147 / 230)  # duty 172
     speed, chunks = turn_plan(90, 50, s)
-    assert speed == 50 and chunks == [1000]
-    speed, chunks = turn_plan(360, 20, s)  # 36°/s: 10 s in four chunks
-    assert speed == 20 and sum(chunks) == 10000 and len(chunks) == 4 and max(chunks) <= 3000
-    speed, chunks = turn_plan(5, 100, s)  # 28 ms at full speed is too short: slow down
-    assert speed < 100 and chunks[0] >= 100
+    assert speed == 50 and chunks == [round(90 / turn_rate(50, s) * 1000)]
+    speed, chunks = turn_plan(720, 20, s)  # 76°/s (duty 122): 9.5 s in four chunks
+    assert speed == 20 and sum(chunks) == round(720 / turn_rate(20, s) * 1000)
+    assert len(chunks) == 4 and max(chunks) <= 3000
+    speed, chunks = turn_plan(15, 100, s)  # 83 ms at full speed is too short: slow down
+    assert 20 < speed < 100 and chunks[0] >= 150 and 15 / turn_rate(speed + 1, s) * 1000 < 150
+    # 20 % still turns at 42 % of full speed, so a tiny angle stays a short pulse.
+    speed, chunks = turn_plan(5, 100, s)
+    assert speed == 20 and chunks == [round(5 / turn_rate(20, s) * 1000)]
 
 
 def _drive(moves: list[PlannedMove], settings: CarSettings) -> tuple[float, float, float]:
-    """Integrate planned moves exactly (ideal wheels). Returns x, y, heading (math frame)."""
+    """Integrate planned moves exactly (ideal wheels on the motor curve). Returns x, y,
+    heading (math frame)."""
     x = y = 0.0
     h = math.pi / 2  # facing +y
     for mv in moves:
-        vx, vy, wz = body_velocity(wheel_output(mv.vx, mv.vy, mv.wz, "ideal"))
+        vx, vy, wz = body_velocity(wheel_speeds(wheel_output(mv.vx, mv.vy, mv.wz, "ideal"), settings.min_pwm))
         t = mv.ms / 1000
         steps = 200
         for _ in range(steps):
@@ -162,10 +199,12 @@ def test_radius_correction() -> None:
     s = CarSettings()
     assert radius_correction(None, 50, s) is None
     assert radius_correction(52, 50, s) is None
+    rate = 30 * 113 / 230  # 30 % is duty 138
     fix = radius_correction(60, 50, s)
-    assert fix is not None and fix.vx > 0 and fix.ms == pytest.approx(10 / 9 * 1000, abs=1)
+    assert fix is not None and fix.vx > 0 and fix.ms == pytest.approx(10 / rate * 1000, abs=1)
     fix = radius_correction(10, 50, s)
-    assert fix is not None and fix.vx < 0 and fix.ms == pytest.approx(15 / 9 * 1000, abs=1)  # capped at 15 cm
+    # Capped at 15 cm.
+    assert fix is not None and fix.vx < 0 and fix.ms == pytest.approx(15 / rate * 1000, abs=1)
 
 
 # -- words -----------------------------------------------------------------------------
