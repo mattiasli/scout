@@ -76,6 +76,9 @@ class RobotConfig:
     follow_settle_s: float = 0.3
     follow_min_score: float = 0.35
     # The camera's horizontal field of view, for turning a box's offset into an angle.
-    # Roughly the OV3660 with the stock lens (the simulator uses the same); not measured
-    # on the car yet. Follow turns 60 % of the angle per step, so a fair error is fine.
-    camera_hfov_deg: float = 66.0
+    # Measured on the car: a person of known height at 200 cm spans 65.5° top to bottom,
+    # which makes 81° across for the 4:3 picture (docs/hardware.md, "Camera").
+    camera_hfov_deg: float = 81.0
+    # Real camera angle per degree of tilt asked for. Measured with the same person: tilts
+    # of 0, 20 and 40 put the camera at about -1°, 17° and 34°.
+    camera_tilt_scale: float = 0.88

@@ -504,8 +504,8 @@ def test_follow_plan_drives_to_the_target_size() -> None:
     # A person goes by width, and so does anything cut off at the top or bottom: its
     # height then depends on the tilt more than the distance.
     far = Detection("person", 0.9, 0.45, 0.0, 0.55, 0.5)  # cut off at the top, 0.10 wide
-    right = Detection("person", 0.9, 0.405, 0.2, 0.595, 1.0)  # cut off at the bottom, 0.19 wide
-    close = Detection("person", 0.9, 0.35, 0.2, 0.65, 1.0)  # 0.30 wide
+    right = Detection("person", 0.9, 0.37, 0.2, 0.63, 1.0)  # cut off at the bottom, 0.26 wide
+    close = Detection("person", 0.9, 0.3, 0.2, 0.7, 1.0)  # 0.40 wide
     assert plan(far, None, s, hfov_deg=66).vx == 40 and "width 0.10" in plan(far, None, s, hfov_deg=66).why
     assert plan(right, None, s, hfov_deg=66).why.startswith("hold: the person is centred")
     assert plan(close, None, s, hfov_deg=66).vx == -30
@@ -519,6 +519,17 @@ def test_follow_plan_drives_to_the_target_size() -> None:
     level = plan(right, 300, s, hfov_deg=66, tilt_deg=0, tuning=FollowTuning(size_deadband=0.01))
     tilted = plan(right, 300, s, hfov_deg=66, tilt_deg=40, tuning=FollowTuning(size_deadband=0.01))
     assert not level.moves and tilted.vx == -30
+    # The fourth floor run: standing at 200 cm with the servo stuck about 15° up while
+    # follow took it to be at 30°. At the camera's real angle and field of view the same
+    # box says too far, and it drives.
+    stuck = Detection("person", 0.9, 0.39, 0.13, 0.54, 0.77)
+    assert "width 0.16" in plan(stuck, None, s, hfov_deg=81, tilt_deg=15.6).why
+    assert plan(stuck, None, s, hfov_deg=81, tilt_deg=15.6).vx == 40
+    # tilt_scale: a setting of 40 on a servo that turns 0.5° per degree is a real 20°.
+    assert (
+        plan(stuck, None, s, hfov_deg=81, tilt_deg=40, tilt_scale=0.5).why
+        == plan(stuck, None, s, hfov_deg=81, tilt_deg=20).why
+    )
     # The second floor run, camera at 40°, person about 2 m away: the box was cut off at
     # the bottom and as tall as a cat at 60 cm, so judging by height it held still. Now
     # it drives, and tilts down to bring the head up from the middle of the picture.
@@ -537,6 +548,9 @@ def test_follow_tilt_keeps_the_target_in_view() -> None:
     step = plan(Detection("cat", 0.9, 0.4, 0.55, 0.6, 0.95), None, s, hfov_deg=66, tilt_deg=0)
     assert step.tilt == -11 and "keeping the cat in the middle of the picture" in step.why
     assert step.acts and not step.moves  # the size is right: tilt only
+    # A servo that turns half as far as it's told needs twice the setting.
+    low_cat = Detection("cat", 0.9, 0.4, 0.55, 0.6, 0.95)
+    assert plan(low_cat, None, s, hfov_deg=66, tilt_deg=0, tilt_scale=0.5).tilt == -22
     assert plan(box(0.5, 0.4), None, s, hfov_deg=66, tilt_deg=12).tilt is None  # centred
     # Cut off at the bottom: its top is kept at 0.2.
     person = Detection("person", 0.9, 0.4, 0.22, 0.6, 1.0)
@@ -546,7 +560,7 @@ def test_follow_tilt_keeps_the_target_in_view() -> None:
     assert plan(tall, None, s, hfov_deg=66, tilt_deg=25).tilt == 35
     assert plan(tall, None, s, hfov_deg=66, tilt_deg=35).tilt == 40
     assert plan(tall, None, s, hfov_deg=66, tilt_deg=40).tilt is None
-    assert plan(tall, None, s, hfov_deg=66, tilt_deg=40).why.startswith("back about")  # still moves
+    assert plan(tall, None, s, hfov_deg=66, tilt_deg=40).why.startswith("hold: the person is centred")
 
 
 def test_pick_target_tracks_the_previous_one() -> None:

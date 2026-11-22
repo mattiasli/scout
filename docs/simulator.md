@@ -124,7 +124,7 @@ These are the UNO rules from the UART protocol:
   all echo. A move that ends on an obstacle reports the reading that stopped it, as the
   UNO does.
 - **Line sensors**: plain-floor readings with a little noise.
-- **Camera**: a raycaster with a 66° field of view, 9 cm above the floor. Walls,
+- **Camera**: a raycaster with an 81° field of view (measured on the car), 9 cm above the floor. Walls,
   furniture, the door and the cat are all distinguishable. The room light fades with
   distance and the light (LED) brightens what is close. Tilt runs from −40° to +40°,
   the firmware's limits; the car clamps a request outside them and reports the angle it

@@ -31,7 +31,7 @@ RESOLUTIONS: dict[str, tuple[int, int]] = {
     "qxga": (2048, 1536),
 }
 
-FOV_DEG = 66.0  # horizontal, roughly an OV3660 with the stock lens
+FOV_DEG = 81.0  # horizontal, as measured on the car (RobotConfig.camera_hfov_deg)
 CAM_HEIGHT = 9.0  # cm above the floor
 CAM_FORWARD = 10.0  # cm ahead of the car's turning centre
 MAX_RENDER_WIDTH = 1024
