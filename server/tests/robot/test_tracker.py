@@ -19,6 +19,7 @@ from scout.robot.follow import (
     bearing_deg,
     exit_side,
     expected_position,
+    keep_distance,
     looks_far,
     plan,
 )
@@ -259,6 +260,21 @@ def test_holding_back_still_turns_but_doesnt_drive() -> None:
     assert (held.vx, held.wz, held.ms, held.why) == (0, 0, 0, "hold: not sure")
     off_centre = person((0.80, 0.1, 0.90, 0.9))
     assert plan(off_centre, 200, settings, hfov_deg=81.0, hold="not sure").wz > 0
+
+
+def test_the_ai_can_set_the_distance_to_keep() -> None:
+    settings = CarSettings()
+    default = FollowTuning()
+    two_metres = keep_distance(default, 240)
+    assert two_metres.target_width == pytest.approx(0.13)  # half as wide as at 1.2 m
+    assert two_metres.target_height == pytest.approx(0.1125)  # a cat a quarter as tall as at 60 cm
+    there = person((0.435, 0.1, 0.565, 0.9))  # 0.13 wide: about 2.4 m away
+    assert plan(there, 400, settings, hfov_deg=81.0).vx > 0  # too far for the 1.2 m it keeps
+    held = plan(there, 400, settings, hfov_deg=81.0, tuning=two_metres)
+    assert held.vx == 0 and "about the right distance away" in held.why
+    assert not looks_far(there, hfov_deg=81.0, tuning=two_metres)
+    close = plan(there, 400, settings, hfov_deg=81.0, tuning=keep_distance(default, 400))
+    assert close.vx < 0  # 4 m wanted: back off
 
 
 def test_looks_far() -> None:

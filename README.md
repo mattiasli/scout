@@ -69,8 +69,8 @@ and the grok CLI.
 | `capture_photo` | Saves a full-size photo to a capture set you can download |
 | `capture_orbit` | Circles the object in front and photographs it from all sides |
 | `find` | Takes a picture and numbers the people, pets and objects the detector finds in it |
-| `follow` | Follows the one you picked from `find` (or the biggest of a class), keeping to it by its colours and searching when it goes out of sight |
-| `follow_view` | Shows what `follow` sees, with the one it follows boxed, so the AI can check it and switch or take over |
+| `follow` | Follows the one you picked from `find` (or the biggest of a class) at the distance the AI asks for, keeping to it by its colours and searching when it goes out of sight |
+| `follow_view` | Shows what `follow` sees, with the one it follows boxed, so the AI can check it and switch or take over. It can wait for the moments that need a look |
 | `release_car` | Lets someone else drive |
 
 ## Repository layout

@@ -44,6 +44,7 @@ FOLLOW_SECONDS_DEFAULT = 60
 FOLLOW_TARGET_DEFAULT = "cat"
 PICK: Range = (1, 20)  # robot.MAX_PICK: find numbers at most 20 boxes
 FOLLOW_VIEW_WAIT: Range = (0, 30)
+FOLLOW_DISTANCE: Range = (20, 500)
 # scout/robot/captures.py: capture ids are 12-64 URL-safe characters.
 CAPTURE_ID_PATTERN = "^[A-Za-z0-9_-]{12,64}$"
 # robot.capture_photo keeps at most this much of a note (after collapsing whitespace).
@@ -355,9 +356,13 @@ TOOLS: list[ToolSpec] = [
             "to someone else who walks past. Two people dressed alike can still fool it: check with "
             "follow_view. It moves in short steps, each decided from a picture taken while the car "
             "stands still: it turns towards the target and tilts the camera to keep it in view (a "
-            "person's head and shoulders), then drives to keep a distance (about 60 cm from "
-            "something that fits the picture, like a cat; about 1.2 m from a person, judged by the "
-            "width of their head and shoulders). When the target goes out of sight it searches: it "
+            "person's head and shoulders), then drives to keep a distance: distance_cm if you give "
+            "one, otherwise about 1.2 m from a person and 60 cm from anything else. The distance is "
+            "judged from the target's size in the picture, taking a person to be an adult (by the "
+            "width of their head and shoulders) and anything else to be about the size of a cat, so "
+            "it is rough for a child, a big dog or an object. To change it while following, call "
+            "follow again with pick (from follow_view) and the new distance_cm. When the target goes "
+            "out of sight it searches: it "
             "turns towards the side it went out, tilts if it went out at the top or bottom, or "
             "drives a short way towards where it vanished, then turns round looking for it, up to a "
             "full circle. It drives only while it's sure it has the right one: after losing it and "
@@ -386,6 +391,12 @@ TOOLS: list[ToolSpec] = [
                 PICK,
                 "The number of the one to follow, from the latest find or follow_view picture "
                 f"({_span(PICK)}). Leave out to follow the biggest target in view.",
+            ),
+            "distance_cm": _int(
+                FOLLOW_DISTANCE,
+                f"About how far from the target to keep, in cm ({_span(FOLLOW_DISTANCE)}). Leave out "
+                "for about 120 cm from a person and 60 cm from anything else. The car's obstacle "
+                "distance still stops it short of anything right in front.",
             ),
         },
     ),

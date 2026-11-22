@@ -56,6 +56,7 @@ from scout.robot.follow import (
     bearing_deg,
     exit_side,
     expected_position,
+    keep_distance,
     looks_far,
     start_tilt,
 )
@@ -342,6 +343,7 @@ class _FollowStart:
     tilt: int | None  # the tilt setting the pick was seen at
     fresh: bool  # picked moments ago, so expect it where it was
     seen: float | None  # monotonic time of the picture it was picked from
+    distance_cm: int | None = None  # how far from it to keep, if the AI said
 
 
 def _box(d: Detection) -> tuple[float, float, float, float]:
@@ -1264,14 +1266,23 @@ class Robot:
         )
 
     async def follow(
-        self, car_id: str, *, target: str = "cat", seconds: int = 60, pick: int | None = None
+        self,
+        car_id: str,
+        *,
+        target: str = "cat",
+        seconds: int = 60,
+        pick: int | None = None,
+        distance_cm: int | None = None,
     ) -> ActionResult:
         """Start following in the background; returns once it has locked on or started
         looking, with the picture it locked on in.
 
         ``pick`` follows that numbered box from the latest ``find`` or ``follow_view``
         picture, and its class replaces ``target``; otherwise it takes the biggest
-        ``target`` in view. Progress shows in ``status`` and ``follow_view``. It ends when
+        ``target`` in view. ``distance_cm`` is about how far from it to keep (otherwise
+        about 120 cm from a person and 60 cm from anything else); the car's obstacle
+        distance still stops it short of anything in front. Progress shows in ``status``
+        and ``follow_view``. It ends when
         the time is up, when a search for the lost target finds nothing, on ``stop`` or a
         direct motion command, or when the car disconnects.
         """
@@ -1279,6 +1290,8 @@ class Robot:
         seconds = _int_arg("seconds", seconds, 5, 300)
         if pick is not None:
             pick = _int_arg("pick", pick, 1, MAX_PICK)
+        if distance_cm is not None:
+            distance_cm = _int_arg("distance_cm", distance_cm, 20, 500)
         if not isinstance(target, str) or not target.strip():
             raise InvalidRequest("target must name what to follow, such as cat, dog or person.")
         label = normalise_label(target)
@@ -1326,6 +1339,7 @@ class Robot:
         car.follow = {
             "target": label,
             "picked": pick is not None,
+            "distance_cm": distance_cm,
             "state": "starting",
             "started": time.time(),
             "seconds": seconds,
@@ -1343,6 +1357,7 @@ class Robot:
             tilt=picked.tilt if picked is not None else None,
             fresh=picked is not None and time.monotonic() - picked.at < 10,
             seen=picked.at if picked is not None else None,
+            distance_cm=distance_cm,
         )
         beh.task = self._spawn(self._follow_loop(car, link, settings, beh, detector, label, seconds, start))
         with suppress(TimeoutError):
@@ -1375,10 +1390,12 @@ class Robot:
             data["in_view"] = listing
             number = next(item["number"] for item in listing if item["following"])
             how = "the one you picked" if info.get("picked") else f"the biggest {label} in view"
+            distance = info.get("distance_cm")
+            keeps = f", about {distance} cm away" if distance is not None else ""
             summary = (
-                f"{name} locked on to {how}, number {number} in the green box, and follows it for up to "
-                f"{seconds} seconds. It keeps to that one by its colours and searches if it goes out of "
-                "sight."
+                f"{name} locked on to {how}, number {number} in the green box, and follows it{keeps} for "
+                f"up to {seconds} seconds. It keeps to that one by its colours and searches if it goes out "
+                "of sight."
             )
             if info.get("checking"):
                 summary += (
@@ -2010,6 +2027,8 @@ class Robot:
             out["tilts"] = f.get("tilts", 0)
             out["camera_tilt_deg"] = f["tilt"]
         out["picked"] = bool(f.get("picked"))
+        if f.get("distance_cm") is not None:
+            out["distance_cm"] = f["distance_cm"]  # how far from the target it keeps, as asked
         if "in_view" in f:
             out["in_view"] = f["in_view"]  # how many of the target's class the last frame had
             out["choice"] = f.get("choice")
@@ -2092,6 +2111,8 @@ class Robot:
         name = settings.name
         info = car.follow if car.follow is not None else {}
         tuning = FollowTuning(search_deg=cfg.follow_search_deg)
+        if start.distance_cm is not None:
+            tuning = keep_distance(tuning, start.distance_cm)
         frames = _LatestFrame()
         started = time.monotonic()
         deadline = started + seconds

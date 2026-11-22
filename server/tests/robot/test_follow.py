@@ -94,6 +94,19 @@ async def test_follow_approaches_the_cat_and_stops_on_request(harness: Harness) 
     assert harness.robot._detector is None  # the model is dropped once nobody follows
 
 
+async def test_follow_keeps_the_distance_asked_for(harness: Harness) -> None:
+    car = await harness.connect(world=cat_world())
+    start = cat_distance(car.world)  # about 130 cm
+    result = await harness.robot.follow("car-1", target="cat", seconds=60, distance_cm=200)
+    assert "about 200 cm away" in result.data["summary"]
+    assert follow_state(harness)["distance_cm"] == 200
+    # It backs away, where without distance_cm it would close in (see the test above).
+    await wait_for(lambda: cat_distance(car.world) > start + 10, within=15)
+    status = (await harness.robot.status("car-1")).data
+    assert status["follow"]["distance_cm"] == 200
+    await harness.robot.stop("car-1")
+
+
 async def test_follow_ends_when_time_is_up(harness: Harness) -> None:
     car = await harness.connect(world=cat_world())
     await harness.robot.follow("car-1", seconds=5)

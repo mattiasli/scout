@@ -186,7 +186,11 @@ class ToolService:
                 return await robot.find(car_id, target=a.get("target"), size=a["size"])
             case "follow":
                 return await robot.follow(
-                    car_id, target=a["target"], seconds=a["seconds"], pick=a.get("pick")
+                    car_id,
+                    target=a["target"],
+                    seconds=a["seconds"],
+                    pick=a.get("pick"),
+                    distance_cm=a.get("distance_cm"),
                 )
             case "follow_view":
                 return await robot.follow_view(car_id, wait_s=a["wait_s"])

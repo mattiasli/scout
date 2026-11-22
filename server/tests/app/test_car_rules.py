@@ -285,12 +285,24 @@ async def test_arguments_and_defaults_reach_the_robot(world: World) -> None:
         "photos": 8,
         "direction": "left",
     }
-    assert calls["follow"] == {"car_id": "scout-1", "target": "dog", "seconds": 60, "pick": None}
+    assert calls["follow"] == {
+        "car_id": "scout-1",
+        "target": "dog",
+        "seconds": 60,
+        "pick": None,
+        "distance_cm": None,
+    }
     assert calls["find"] == {"car_id": "scout-1", "target": None, "size": "medium"}
-    await world.call(world.alice, "follow", {"pick": 3})
+    await world.call(world.alice, "follow", {"pick": 3, "distance_cm": 200})
     await world.call(world.alice, "follow_view", {})
     calls = dict(world.robot.calls)
-    assert calls["follow"] == {"car_id": "scout-1", "target": "cat", "seconds": 60, "pick": 3}
+    assert calls["follow"] == {
+        "car_id": "scout-1",
+        "target": "cat",
+        "seconds": 60,
+        "pick": 3,
+        "distance_cm": 200,
+    }
     assert calls["follow_view"] == {"car_id": "scout-1", "wait_s": 0}
     await world.call(world.alice, "follow_view", {"wait_s": 10})
     assert world.robot.calls[-1][1] == {"car_id": "scout-1", "wait_s": 10}
