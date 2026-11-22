@@ -75,9 +75,9 @@ class FollowTuning:
     target_height: float = 0.45  # box height / picture height, target wholly in view
     target_height_cm: float = 60.0  # a cat about 25 cm tall
     # Box width / picture width, corrected for the camera's tilt. Measured on the floor:
-    # a person's head and shoulders, camera at 40°, were 0.105 wide (0.113 corrected) at
-    # about 2.05 m, which makes 0.19 about 1.2 m.
-    target_width: float = 0.19
+    # a person standing at 200 cm was 0.15 wide (0.159 corrected, camera about 15° up),
+    # which makes 0.26 about 1.2 m.
+    target_width: float = 0.26
     target_width_cm: float = 120.0
     size_deadband: float = 0.15  # within ±15 % of the target distance is close enough
     drive_gain: float = 0.6
@@ -151,8 +151,10 @@ def _above_middle_deg(y: float, hfov_deg: float) -> float:
     return math.degrees(math.atan((0.5 - y) * 2 * math.tan(math.radians(hfov_deg / 2)) * ASPECT))
 
 
-def _tilt(target: Detection, tilt_deg: float, hfov_deg: float, t: FollowTuning) -> tuple[int | None, str]:
-    """The tilt that puts the target where it belongs in the picture, and why."""
+def _tilt(
+    target: Detection, tilt_deg: float, tilt_scale: float, hfov_deg: float, t: FollowTuning
+) -> tuple[int | None, str]:
+    """The tilt setting that puts the target where it belongs in the picture, and why."""
     name = target.label
     if target.y0 <= t.top_edge:
         goal = tilt_deg + t.tilt_step_deg
@@ -165,7 +167,7 @@ def _tilt(target: Detection, tilt_deg: float, hfov_deg: float, t: FollowTuning) 
         change = _above_middle_deg(row, hfov_deg) - _above_middle_deg(aim, hfov_deg)
         if abs(change) < t.tilt_deadband_deg:
             return None, ""
-        goal = tilt_deg + change * t.tilt_gain
+        goal = tilt_deg + change * t.tilt_gain / tilt_scale
     new = max(t.tilt_min, min(t.tilt_max, round(goal)))
     if new == round(tilt_deg):
         return None, ""  # at the end of the servo's range
@@ -184,13 +186,16 @@ def plan(
     *,
     hfov_deg: float,
     tilt_deg: float = 0.0,
+    tilt_scale: float = 1.0,
     tuning: FollowTuning | None = None,
 ) -> FollowStep:
     """The next step towards ``target``, from a picture taken at a standstill with the
-    camera at ``tilt_deg``."""
+    camera tilt set to ``tilt_deg``. The camera's real angle is ``tilt_deg * tilt_scale``
+    (a hobby servo turns a little more or less than it's told); the step's tilt is a
+    setting again."""
     t = tuning or FollowTuning()
-    move = _move(target, cm, settings, hfov_deg, tilt_deg, t)
-    tilt, tilt_why = _tilt(target, tilt_deg, hfov_deg, t)
+    move = _move(target, cm, settings, hfov_deg, tilt_deg * tilt_scale, t)
+    tilt, tilt_why = _tilt(target, tilt_deg, tilt_scale, hfov_deg, t)
     if tilt is None:
         return move
     return FollowStep(move.vx, move.wz, move.ms, f"{tilt_why}; {move.why}", tilt)

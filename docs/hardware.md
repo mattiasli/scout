@@ -85,6 +85,22 @@ obstacle distance at 15 cm.
 | 33 | Small red status LED (active low) |
 | 0, 5, 18, 19, 21, 22, 23, 25, 26, 27, 32, 34, 35, 36, 39 | Camera |
 
+## Camera
+
+Measured on the car from pictures of a person of known height standing 200 cm in front,
+taken at three tilts, using where their head and feet appear:
+
+| | Measured |
+|---|---|
+| Field of view | about 65.5° top to bottom, so about 81° across (the picture is 4:3) |
+| Tilt | settings of 0, 20 and 40 put the camera at about −1°, 17° and 34° up: 0.88° per degree |
+
+The server uses both (`camera_hfov_deg` and `camera_tilt_scale` in the robot config) to
+turn a box in the picture into a direction. The servo arm is a push fit on the shaft. If
+the camera is knocked it can jam, or go back on a tooth or two out; three pictures at
+tilts 0, 20 and 40 that look the same, or a tilt of 0 that doesn't look straight ahead,
+show it.
+
 ## Power
 
 Two 18650 Li-ion cells (not included in the kit) in the holder on the shield. The kit has
@@ -99,5 +115,7 @@ no battery-level sensing; adding it takes two resistors and pin A3, which is kep
 - There are no wheel encoders and no gyroscope, so distances and turn angles are
   estimates. Mecanum wheels slip, especially sideways.
 - The camera sits roughly 10–15 cm above the floor.
+- The distance sensor's beam is wider than a person's legs are far apart: in a narrow
+  room it can echo off furniture to the side rather than what the camera is looking at.
 - Two speed channels for four wheels means blended moves (for example forward while
   turning) are approximate.

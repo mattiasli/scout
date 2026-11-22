@@ -1698,6 +1698,7 @@ class Robot:
                     settings,
                     hfov_deg=cfg.camera_hfov_deg,
                     tilt_deg=info["tilt"],
+                    tilt_scale=cfg.camera_tilt_scale,
                     tuning=tuning,
                 )
                 # What it saw and decided last, for status: it explains a car that holds still.

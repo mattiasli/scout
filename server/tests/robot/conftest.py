@@ -50,6 +50,7 @@ def fast_config(**overrides: Any) -> RobotConfig:
         follow_lost_s=0.8,
         follow_stream_secs=3,
         follow_stream_resend_s=1.5,
+        camera_tilt_scale=1.0,  # the simulated servo turns exactly as far as it's told
     )
     for key, value in overrides.items():
         setattr(cfg, key, value)
