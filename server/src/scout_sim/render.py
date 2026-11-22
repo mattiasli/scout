@@ -118,8 +118,8 @@ def _render(
         top = horizon - f * (top_cm - CAM_HEIGHT) / dps
         bottom = horizon + f * CAM_HEIGHT / dps
         finite = np.isfinite(dps)
-        r0 = int(max(0, math.floor(float(top[finite].min()))))
-        r1 = int(min(h, math.ceil(float(bottom[finite].max()))))
+        r0 = int(max(0, math.floor(float(np.min(top[finite])))))
+        r1 = int(min(h, math.ceil(float(np.max(bottom[finite])))))
         if r0 >= r1:
             return
         sub_depth = depth[r0:r1, c0:c1]
