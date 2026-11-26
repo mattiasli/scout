@@ -48,10 +48,13 @@ const char* resetReasonName(int reason) {
   return kNames[reason];
 }
 
-bool resetIsCountable(int reason) {
-  // ESP_RST_POWERON (1) is also what the ESP32 reports for its reset button (EN pin);
-  // ESP_RST_EXT (2) is listed for completeness.
-  return reason == 1 || reason == 2;
+bool resetButtonPressed(int reason, bool unoAnswered, uint32_t unoUptimeS, uint32_t ownUptimeMs,
+                        uint32_t marginMs) {
+  // ESP_RST_POWERON (1) is what the ESP32 reports for its reset button (EN pin) as well as
+  // for power-on; ESP_RST_EXT (2) is listed for completeness.
+  if (reason != 1 && reason != 2) return false;
+  if (!unoAnswered) return false;
+  return static_cast<uint64_t>(unoUptimeS) * 1000 >= static_cast<uint64_t>(ownUptimeMs) + marginMs;
 }
 
 uint32_t lightDuty(int32_t level, uint32_t maxDuty) {

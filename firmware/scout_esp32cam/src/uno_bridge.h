@@ -26,6 +26,11 @@ class UnoBridge {
   bool begin();
   bool startPinging();
 
+  // Before startPinging() only (it reads UART0 on the caller's task): PINGs the UNO and
+  // waits up to `waitMs` for its uptime in seconds, from PONG. A BOOT on the way means it
+  // has only just started: 0. False when it doesn't answer.
+  bool askUptime(uint32_t waitMs, uint32_t* uptimeS);
+
   // Sends one request and returns the seq it used, or 0 if it couldn't be built.
   uint16_t send(const char* type, const int32_t* args, uint8_t argCount);
   uint16_t sendConf(const char* key, int32_t value);

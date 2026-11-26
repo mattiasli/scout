@@ -129,10 +129,12 @@ constexpr const char* kSetupDefaultPassword = "scoutsetup";
 constexpr uint8_t kSetupChannel = 6;
 constexpr uint8_t kSetupMaxClients = 2;
 constexpr uint32_t kSetupRetryMs = 180000;  // with nobody on the AP, retry saved networks
-constexpr uint8_t kResetsForSetup = 3;
-constexpr uint32_t kResetWindowMs = 10000;
-constexpr uint32_t kResetUpdateMs = 250;    // RTC copy of the reset counter
-constexpr uint32_t kResetSaveMs = 2000;     // NVS copy
+// One press of the reset button starts setup mode (resetButtonPressed() in core/util.h).
+constexpr uint32_t kSetupButtonWaitMs = 600;     // at boot, how long to wait for the UNO's PONG
+constexpr uint32_t kSetupButtonMarginMs = 3000;  // the UNO must have run this much longer
+// In setup mode the white light blinks along with the status LED, dimly (level 0..100 as
+// for `light`): not every board has a red LED you can see.
+constexpr int32_t kSetupLampLevel = 5;
 constexpr uint8_t kScanListMax = 20;
 
 // ---------------------------------------------------------------- OTA

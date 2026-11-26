@@ -16,8 +16,13 @@ void formatMac(const uint8_t mac[6], char out[18]);
 
 // esp_reset_reason_t value -> the car-link "reset" word ("poweron", "software", ...).
 const char* resetReasonName(int reason);
-// True for resets a person causes: the reset button or the power switch.
-bool resetIsCountable(int reason);
+// True when this boot is someone pressing the ESP32-CAM's reset button. The chip reports
+// a power-on both for that button (it pulls the enable pin) and for the power switch, so
+// the UNO tells them apart: the button doesn't touch it, so it has been running for at
+// least `marginMs` longer than this board. The power switch restarts both together.
+// False when the UNO didn't answer, and for restarts, crashes and brownouts.
+bool resetButtonPressed(int reason, bool unoAnswered, uint32_t unoUptimeS, uint32_t ownUptimeMs,
+                        uint32_t marginMs);
 
 // Light level 0..100 -> LEDC duty, where level 100 gets `maxDuty`.
 uint32_t lightDuty(int32_t level, uint32_t maxDuty);

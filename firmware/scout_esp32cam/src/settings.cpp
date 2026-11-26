@@ -21,24 +21,6 @@ void keyFor(char* out, size_t cap, const char* prefix, uint8_t index) { snprintf
 
 }  // namespace
 
-bool loadResetRecord(ResetRecord* out) {
-  Preferences prefs;
-  if (!prefs.begin(kNamespace, true)) return false;
-  bool ok = prefs.getBytesLength("rst") == sizeof *out && prefs.getBytes("rst", out, sizeof *out) == sizeof *out;
-  prefs.end();
-  return ok;
-}
-
-void saveResetRecord(const ResetRecord& record) {
-  Preferences prefs;
-  if (!prefs.begin(kNamespace, false)) return;
-  ResetRecord old;
-  bool same = prefs.getBytesLength("rst") == sizeof old && prefs.getBytes("rst", &old, sizeof old) == sizeof old &&
-              memcmp(&old, &record, sizeof old) == 0;
-  if (!same) prefs.putBytes("rst", &record, sizeof record);
-  prefs.end();
-}
-
 void Settings::load() {
   Preferences prefs;
   networks_.clear();

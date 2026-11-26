@@ -17,7 +17,6 @@
 #include "core/camera_info.h"
 #include "core/json_out.h"
 #include "core/request_tracker.h"
-#include "core/reset_counter.h"
 #include "core/util.h"
 #include "core/ws_handshake.h"
 #include "leds.h"
@@ -47,50 +46,18 @@ void silenceConsole() {
   (void)freopen("/dev/null", "w", stderr);
 }
 
-// ---------------------------------------------------------------- reset counter
+// ---------------------------------------------------------------- reset button
 
-// The record lives in RTC memory, which survives a software or watchdog reset. On the
-// ESP32 the RST button pulls the chip's enable pin, which may clear RTC memory as well,
-// so a copy also goes to NVS (a handful of small writes per power-on, none afterwards)
-// and is used whenever the RTC copy is gone.
-RTC_NOINIT_ATTR ResetRecord g_resetRecord;
-ResetCounter g_resetCounter(cfg::kResetsForSetup, cfg::kResetWindowMs);
-esp_timer_handle_t g_resetTimer = nullptr;
-uint32_t g_resetSavedMs = 0;
-
-bool countResets() {
-  if (!ResetCounter::valid(g_resetRecord)) {
-    ResetRecord stored;
-    if (loadResetRecord(&stored)) g_resetRecord = stored;
-  }
-  bool countable = resetIsCountable(static_cast<int>(esp_reset_reason()));
-  bool trigger = g_resetCounter.onBoot(&g_resetRecord, countable);
-  saveResetRecord(g_resetRecord);
-  return trigger;
-}
-
-void resetTick(void*) {
-  uint32_t up = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-  g_resetCounter.onUptime(&g_resetRecord, up);
-  bool done = !g_resetCounter.watching();
-  if (done || up - g_resetSavedMs >= cfg::kResetSaveMs) {
-    saveResetRecord(g_resetRecord);
-    g_resetSavedMs = up;
-  }
-  if (done && g_resetTimer != nullptr) esp_timer_stop(g_resetTimer);
-}
-
-// Runs on a timer so it keeps counting while the boot blocks on WiFi.
-void watchResets() {
-  if (!g_resetCounter.watching()) return;
-  g_resetSavedMs = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-  esp_timer_create_args_t args = {};
-  args.callback = &resetTick;
-  args.dispatch_method = ESP_TIMER_TASK;
-  args.name = "resets";
-  if (esp_timer_create(&args, &g_resetTimer) == ESP_OK) {
-    esp_timer_start_periodic(g_resetTimer, static_cast<uint64_t>(cfg::kResetUpdateMs) * 1000);
-  }
+// One press of the ESP32-CAM's reset button starts setup mode; the power switch never
+// does. See resetButtonPressed(). Waits up to cfg::kSetupButtonWaitMs for the UNO, and
+// only after a power-on or the button.
+bool resetButtonWasPressed(UnoBridge& uno) {
+  int reason = static_cast<int>(esp_reset_reason());
+  if (reason != ESP_RST_POWERON && reason != ESP_RST_EXT) return false;
+  uint32_t unoUptimeS = 0;
+  bool answered = uno.askUptime(cfg::kSetupButtonWaitMs, &unoUptimeS);
+  uint32_t ownMs = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+  return resetButtonPressed(reason, answered, unoUptimeS, ownMs, cfg::kSetupButtonMarginMs);
 }
 
 // ---------------------------------------------------------------- JSON fields
@@ -253,14 +220,13 @@ void Car::setup() {
   led_.begin();
   led_.setMode(LedMode::kConnecting);
 
-  bool resetSetup = countResets();
-  watchResets();
+  bool resetSetup = resetButtonWasPressed(uno_);
 
   pendingVerify_ = Ota::pendingVerify();
   settings_.load();
   bool haveUrl = ws::parseServerUrl(settings_.serverUrl(), &url_);
 
-  if (resetSetup) return enterSetup("You pressed reset 3 times, so the car started in setup mode.");
+  if (resetSetup) return enterSetup("You pressed the reset button, so the car started in setup mode.");
   if (settings_.networks().count() == 0) return enterSetup("No WiFi network is saved yet.");
   if (!haveUrl) return enterSetup("The server address isn't set yet.");
   if (!settings_.hasCarKey()) return enterSetup("The car key isn't set yet.");
@@ -282,6 +248,9 @@ void Car::setup() {
 
 void Car::enterSetup(const char* why) {
   uno_.sendStop();
+  // The camera never starts in setup mode, so the light can take its PWM timer now.
+  light_.begin();
+  led_.alsoOnLamp(&light_, cfg::kSetupLampLevel);
   led_.setMode(LedMode::kSetup);
   portal_ = new SetupPortal();
   portal_->begin(&settings_, why);

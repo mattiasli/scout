@@ -28,12 +28,20 @@ class StatusLed {
  public:
   void begin();
   void setMode(LedMode mode) { mode_ = mode; }
+  // Also show the pattern on the white light, at `level` (0..100) while on. Setup mode
+  // uses it: some boards have no red LED you can see (the AD176's ESP32-CAM-V2.0).
+  void alsoOnLamp(Light* lamp, int32_t level) {
+    lampLevel_ = level;
+    lamp_ = lamp;
+  }
   LedMode mode() const { return mode_; }
 
  private:
   static void tick(void* self);
   volatile LedMode mode_ = LedMode::kConnecting;
   bool lastOn_ = false;
+  Light* volatile lamp_ = nullptr;
+  int32_t lampLevel_ = 0;
 };
 
 }  // namespace scout

@@ -47,6 +47,8 @@ void StatusLed::tick(void* self) {
   led->lastOn_ = on;
   bool level = cfg::kStatusLedActiveLow ? !on : on;
   digitalWrite(cfg::kStatusLedPin, level ? HIGH : LOW);
+  Light* lamp = led->lamp_;
+  if (lamp != nullptr) lamp->set(on ? led->lampLevel_ : 0);
 }
 
 }  // namespace scout
