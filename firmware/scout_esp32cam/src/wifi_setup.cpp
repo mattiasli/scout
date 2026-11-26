@@ -146,7 +146,11 @@ void SetupPortal::begin(Settings* settings, const char* why) {
 
   WiFi.persistent(false);
   WiFi.mode(WIFI_AP_STA);  // STA as well, for scanning and the periodic retries
-  WiFi.softAPConfig(kApIp, kApIp, kApMask);
+  // The car's own address as DNS server for the phone (the last argument). Without one,
+  // a phone can't look up the address it checks for a sign-in page, so it reports "no
+  // internet" instead of opening the setup page. The DNS server below answers every
+  // name with the car, and the web server redirects other hosts to the page.
+  WiFi.softAPConfig(kApIp, kApIp, kApMask, IPAddress(static_cast<uint32_t>(0)), kApIp);
   WiFi.softAP(ssid_, settings_->setupPassword(), cfg::kSetupChannel, 0, cfg::kSetupMaxClients, false,
               WIFI_AUTH_WPA2_PSK);
 

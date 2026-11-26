@@ -17,6 +17,38 @@ bool UnoBridge::startPinging() {
                                  nullptr, 1) == pdPASS;
 }
 
+bool UnoBridge::askUptime(uint32_t waitMs, uint32_t* uptimeS) {
+  if (queue_ == nullptr) return false;
+  uint32_t start = millis();
+  uint32_t lastPing = start - cfg::kUnoPingMs;  // the first PING goes out at once
+  while (millis() - start < waitMs) {
+    if (millis() - lastPing >= cfg::kUnoPingMs) {
+      lastPing = millis();
+      send("PING", nullptr, 0);
+    }
+    while (Serial.available() > 0) {
+      int byte = Serial.read();
+      if (byte < 0) break;
+      if (!parser_.feed(static_cast<uint8_t>(byte))) continue;
+      lastRxMs_ = millis();
+      everRx_ = true;
+      if (!frame_.assign(parser_)) continue;
+      handle(frame_);  // keeps TEL and the version, and queues BOOT and replies as usual
+      if (frame_.is("BOOT")) {
+        *uptimeS = 0;
+        return true;
+      }
+      int32_t up;
+      if (frame_.is("PONG") && frame_.argInt(1, &up) && up >= 0) {
+        *uptimeS = static_cast<uint32_t>(up);
+        return true;
+      }
+    }
+    delay(2);
+  }
+  return false;
+}
+
 void UnoBridge::taskEntry(void* self) { static_cast<UnoBridge*>(self)->run(); }
 
 void UnoBridge::run() {

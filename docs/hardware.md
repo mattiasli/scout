@@ -83,7 +83,7 @@ obstacle distance at 15 cm.
 |---|---|
 | 1, 3 | Serial link to the UNO (and USB) |
 | 4 | White flash LED |
-| 33 | Small red status LED (active low) |
+| 33 | Small red status LED (active low) on AI-Thinker boards; none to be seen on the AD176's ESP32-CAM-V2.0 |
 | 0, 5, 18, 19, 21, 22, 23, 25, 26, 27, 32, 34, 35, 36, 39 | Camera |
 
 ## Camera

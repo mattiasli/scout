@@ -11,14 +11,8 @@
 #include <Arduino.h>
 
 #include "core/networks.h"
-#include "core/reset_counter.h"
 
 namespace scout {
-
-// A copy of the reset counter's record in NVS, for boards where RTC memory doesn't
-// survive the reset button. False when none is stored.
-bool loadResetRecord(ResetRecord* out);
-void saveResetRecord(const ResetRecord& record);
 
 class Settings {
  public:

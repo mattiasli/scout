@@ -8,13 +8,10 @@
 
 #include "camera_info.h"
 #include "networks.h"
-#include "reset_counter.h"
 #include "testing.h"
 #include "util.h"
 
 using scout::NetworkList;
-using scout::ResetCounter;
-using scout::ResetRecord;
 
 // ---------------------------------------------------------------- resolutions
 
@@ -67,71 +64,28 @@ TEST(camera_model_names) {
   CHECK(scout::cameraModelName(0x1234) == nullptr);
 }
 
-// ---------------------------------------------------------------- reset counter
+// ---------------------------------------------------------------- reset button
 
-TEST(three_quick_resets_enter_setup) {
-  ResetCounter c(3, 10000);
-  ResetRecord r;
-  std::memset(&r, 0x5A, sizeof r);  // power-on garbage
-  CHECK(!c.onBoot(&r, true));
-  c.onUptime(&r, 2000);
-  CHECK(!c.onBoot(&r, true));
-  c.onUptime(&r, 2000);
-  CHECK(c.onBoot(&r, true));
-  CHECK(!c.watching());
-  // The record is cleared, so the next reset starts a new count.
-  CHECK(!c.onBoot(&r, true));
-  CHECK_EQ(r.count, 1u);
+TEST(one_press_of_the_reset_button_is_told_apart_from_the_power_switch) {
+  // The button restarts only the ESP32, so the UNO has been running for a while.
+  CHECK(scout::resetButtonPressed(1, true, 120, 700, 3000));
+  CHECK(scout::resetButtonPressed(2, true, 120, 700, 3000));
+  // The power switch restarts both: the UNO is about as young as the ESP32.
+  CHECK(!scout::resetButtonPressed(1, true, 0, 700, 3000));
+  CHECK(!scout::resetButtonPressed(1, true, 2, 700, 3000));
+  // At the margin.
+  CHECK(scout::resetButtonPressed(1, true, 4, 1000, 3000));
+  CHECK(!scout::resetButtonPressed(1, true, 3, 1000, 3000));
+  // No overflow with a UNO that has run for weeks.
+  CHECK(scout::resetButtonPressed(1, true, 4000000, 700, 3000));
 }
 
-TEST(slow_resets_do_not_count) {
-  ResetCounter c(3, 10000);
-  ResetRecord r = ResetRecord();
-  CHECK(!c.onBoot(&r, true));
-  c.onUptime(&r, 6000);
-  CHECK(!c.onBoot(&r, true));  // 6 s used up
-  c.onUptime(&r, 3000);
-  c.onUptime(&r, 4500);       // 10.5 s in total: start over
-  CHECK(!c.watching());
-  CHECK(!c.onBoot(&r, true));
-  CHECK_EQ(r.count, 1u);
-  CHECK(!c.onBoot(&r, true));
-  CHECK(c.onBoot(&r, true));
-}
-
-TEST(software_resets_and_crashes_clear_the_count) {
-  ResetCounter c(3, 10000);
-  ResetRecord r = ResetRecord();
-  CHECK(!c.onBoot(&r, true));
-  CHECK(!c.onBoot(&r, true));
-  CHECK(!c.onBoot(&r, false));  // e.g. esp_restart() or a brownout
-  CHECK_EQ(r.count, 0u);
-  CHECK(!c.onBoot(&r, true));
-  CHECK(!c.onBoot(&r, true));
-  CHECK(c.onBoot(&r, true));
-}
-
-TEST(a_tampered_record_is_ignored) {
-  ResetCounter c(3, 10000);
-  ResetRecord r = ResetRecord();
-  CHECK(!c.onBoot(&r, true));
-  CHECK(!c.onBoot(&r, true));
-  r.count = 7;  // the check word no longer matches
-  CHECK(!ResetCounter::valid(r));
-  CHECK(!c.onBoot(&r, true));
-  CHECK_EQ(r.count, 1u);
-}
-
-TEST(uptime_updates_keep_the_record_valid) {
-  ResetCounter c(3, 10000);
-  ResetRecord r = ResetRecord();
-  c.onBoot(&r, true);
-  for (uint32_t t = 0; t < 9000; t += 250) {
-    c.onUptime(&r, t);
-    CHECK(ResetCounter::valid(r));
-  }
-  CHECK_EQ(r.elapsedMs, 8750u);
-  CHECK_EQ(r.count, 1u);
+TEST(no_setup_mode_without_the_uno_or_after_restarts_and_crashes) {
+  CHECK(!scout::resetButtonPressed(1, false, 120, 700, 3000));  // UNO not answering
+  CHECK(!scout::resetButtonPressed(3, true, 120, 700, 3000));   // software restart
+  CHECK(!scout::resetButtonPressed(4, true, 120, 700, 3000));   // panic
+  CHECK(!scout::resetButtonPressed(6, true, 120, 700, 3000));   // task watchdog
+  CHECK(!scout::resetButtonPressed(9, true, 120, 700, 3000));   // brownout
 }
 
 // ---------------------------------------------------------------- saved networks
@@ -221,10 +175,6 @@ TEST(mac_and_reset_reason_names) {
   CHECK_EQ(std::string(scout::resetReasonName(15)), std::string("cpu_lockup"));
   CHECK_EQ(std::string(scout::resetReasonName(99)), std::string("unknown"));
   CHECK_EQ(std::string(scout::resetReasonName(-1)), std::string("unknown"));
-  CHECK(scout::resetIsCountable(1));
-  CHECK(scout::resetIsCountable(2));
-  CHECK(!scout::resetIsCountable(3));
-  CHECK(!scout::resetIsCountable(9));
 }
 
 TEST(light_duty_mapping) {

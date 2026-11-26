@@ -115,8 +115,9 @@ them.
 You need a phone or laptop with WiFi, the Scout server's address and the car's key
 (both come from the Scout website).
 
-1. Switch the car on. With nothing saved yet it starts in setup mode: the red LED on
-   the ESP32-CAM gives **two short blinks every two seconds**.
+1. Switch the car on. With nothing saved yet it starts in setup mode: the white light
+   on the camera side gives **two short, dim blinks every two seconds** (so does the
+   red status LED, on boards that have one).
 2. On your phone, open the WiFi settings and join the network called
    **Scout-Setup-XXXX** (XXXX is different for every board). The password is
    **scoutsetup**.
@@ -135,15 +136,25 @@ You need a phone or laptop with WiFi, the Scout server's address and the car's k
 8. Press **Save and restart**. The car restarts and joins your WiFi. Reconnect your
    phone to your usual network.
 
-While it connects the LED blinks quickly; once the server has answered it stays on.
+On boards with the red status LED, it blinks quickly while the car connects and stays
+on once the server has answered.
 
 ## When the car enters setup mode
 
 - No WiFi network, server address or car key is saved.
 - None of the saved networks could be joined within about 30 seconds of switching on.
-- The reset button was pressed, or the power switched off and on, three times within
-  about ten seconds of running time (press, wait a moment, press again). Use this to
-  change settings when the car is connected and working.
+- The **RESET** button on the ESP32-CAM was pressed once (on the V2.0 board it's on the
+  back, next to the USB socket). Use this to change settings when the car is connected
+  and working. Give it a few seconds after switching on first.
+
+Switching the power off and on never starts setup mode. The ESP32 reports a power-on
+for its reset button as well, so the car asks the UNO how long it has been running: the
+button restarts only the ESP32-CAM, while the power switch restarts both boards. So the
+button needs the UNO connected and answering; with the cable between the boards
+unplugged (for example while flashing) the car starts normally.
+
+To leave setup mode without changing anything, press **Save and restart**, or switch
+the car off and on.
 
 In setup mode the motors stay stopped and the camera is off. If nobody is connected to
 the setup network, the car tries the saved networks again every three minutes and
@@ -155,6 +166,10 @@ the light off, and keeps trying: the same network straight away, all saved netwo
 every two minutes.
 
 ## Status LED (red, GPIO33)
+
+Not every board has this LED where you can see it: the ESP32-CAM-V2.0 on the AD176 has
+none on the outside. In setup mode the white light blinks along, dimly, so that pattern
+always shows.
 
 | Pattern | Meaning |
 |---|---|
