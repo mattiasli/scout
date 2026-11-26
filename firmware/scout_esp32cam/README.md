@@ -121,8 +121,10 @@ You need a phone or laptop with WiFi, the Scout server's address and the car's k
 2. On your phone, open the WiFi settings and join the network called
    **Scout-Setup-XXXX** (XXXX is different for every board). The password is
    **scoutsetup**.
-3. The setup page usually opens by itself. If it doesn't, open a browser and go to
-   **http://192.168.4.1**.
+3. The setup page usually opens by itself. If the phone warns that the network has no
+   internet, choose to stay connected. If the page doesn't open, open a browser and go
+   to **http://4.3.2.1**. (Not the usual 192.168.4.1: Samsung phones only open a setup
+   page by themselves when its address looks public.)
 4. Under **WiFi networks**, pick your home network from the list (or type its name if
    it's hidden), enter its password and press **Add network**. Only 2.4 GHz networks
    work. You can save up to five; the car tries the strongest one it can see first.

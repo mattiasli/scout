@@ -11,7 +11,11 @@ namespace scout {
 
 namespace {
 
-const IPAddress kApIp(192, 168, 4, 1);
+// The setup network's own address. Samsung phones only look for a sign-in page when the
+// name they check resolves to a public address; for a private one such as 192.168.4.1
+// they just report "no internet". Other ESP32 setup pages use 4.3.2.1 for the same
+// reason. A phone on the setup network can't reach the real 4.3.2.1 anyway.
+const IPAddress kApIp(4, 3, 2, 1);
 const IPAddress kApMask(255, 255, 255, 0);
 
 const char kPageHead[] = R"(<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -146,13 +150,14 @@ void SetupPortal::begin(Settings* settings, const char* why) {
 
   WiFi.persistent(false);
   WiFi.mode(WIFI_AP_STA);  // STA as well, for scanning and the periodic retries
-  // The car's own address as DNS server for the phone (the last argument). Without one,
-  // a phone can't look up the address it checks for a sign-in page, so it reports "no
-  // internet" instead of opening the setup page. The DNS server below answers every
-  // name with the car, and the web server redirects other hosts to the page.
+  // DHCP offers the car's own address as DNS server (the last argument). The DNS server
+  // below answers every name with the car, and the web server sends requests for other
+  // hosts to the page, so a phone checking for a sign-in page finds this one.
   WiFi.softAPConfig(kApIp, kApIp, kApMask, IPAddress(static_cast<uint32_t>(0)), kApIp);
   WiFi.softAP(ssid_, settings_->setupPassword(), cfg::kSetupChannel, 0, cfg::kSetupMaxClients, false,
               WIFI_AUTH_WPA2_PSK);
+  // DHCP option 114 names the page too (http://4.3.2.1), for phones that read it.
+  WiFi.AP.enableDhcpCaptivePortal();
 
   dns_.setErrorReplyCode(DNSReplyCode::NoError);
   dns_.start(53, "*", kApIp);
@@ -251,9 +256,20 @@ bool SetupPortal::captive() {
   int colon = host.indexOf(':');
   if (colon >= 0) host = host.substring(0, colon);
   if (host == kApIp.toString()) return false;
+  remember(host, web_.uri());
   web_.sendHeader("Location", String("http://") + kApIp.toString() + "/", true);
   web_.send(302, "text/plain", "");
   return true;
+}
+
+void SetupPortal::remember(const String& host, const String& uri) {
+  char entry[sizeof recent_[0]];
+  snprintf(entry, sizeof entry, "%s%s", host.c_str(), uri.c_str());
+  uint8_t newest = (recentNext_ + kRecentMax - 1) % kRecentMax;
+  if (recentCount_ > 0 && strcmp(recent_[newest], entry) == 0) return;  // phones repeat their checks
+  strcpy(recent_[recentNext_], entry);
+  recentNext_ = (recentNext_ + 1) % kRecentMax;
+  if (recentCount_ < kRecentMax) ++recentCount_;
 }
 
 void SetupPortal::redirectHome(const char* message) {
@@ -359,6 +375,22 @@ void SetupPortal::handleRoot() {
           "and joins your WiFi. Firmware ";
   page += cfg::kFirmwareVersion;
   page += ".</p></section>";
+
+  // The checks phones make for a sign-in page, for when this page doesn't open by itself.
+  page += "<section><details><summary>Sign-in checks</summary><p class=\"note\">Addresses that phones "
+          "on this network asked for, newest first. Each was sent on to this page.</p>";
+  if (recentCount_ == 0) {
+    page += "<p class=\"note\">None yet.</p>";
+  } else {
+    page += "<ul>";
+    for (uint8_t k = 0; k < recentCount_; ++k) {
+      page += "<li><span>";
+      appendEscaped(page, recent_[(recentNext_ + kRecentMax - 1 - k) % kRecentMax]);
+      page += "</span></li>";
+    }
+    page += "</ul>";
+  }
+  page += "</details></section>";
   page += kPageTail;
 
   web_.sendHeader("Cache-Control", "no-store");

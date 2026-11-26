@@ -43,6 +43,7 @@ class SetupPortal {
   void handleNotFound();
   void redirectHome(const char* message);
   bool captive();  // redirects requests for other hosts to the portal
+  void remember(const String& host, const String& uri);  // for the page's "Sign-in checks"
   void collectScan();
   void retrySavedNetworks();
 
@@ -55,6 +56,11 @@ class SetupPortal {
   bool scanPending_ = false;
   uint32_t lastClientMs_ = 0;
   uint32_t lastRetryMs_ = 0;
+
+  static constexpr uint8_t kRecentMax = 8;
+  char recent_[kRecentMax][64] = {};
+  uint8_t recentNext_ = 0;
+  uint8_t recentCount_ = 0;
 
   struct Seen {
     char ssid[33];
