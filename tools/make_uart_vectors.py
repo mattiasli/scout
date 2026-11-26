@@ -39,7 +39,8 @@ OK = [
     ("ACK", 3, -20),
     ("ERR", 5, "RANGE"),
     ("DONE", 12, "OBST", 40, 14, 350),
-    ("TEL", 0, -1, 512, 600, 480, 0, 0, 3),
+    ("TEL", 0, -1, 512, 600, 480, 0, 0, 3),  # UNO firmware from before the laser sensor
+    ("TEL", 0, -1, 512, 600, 480, 0, 0, 3, 87),
     ("MOVE", 1, "abc", 0, 0, 1),  # valid frame; the command layer rejects the arg
     ("ABCDEFGH", 0, 1, 2, 3, 4, 5, 6, 7, 8),  # 8-letter type, 8 args
 ]

@@ -46,6 +46,9 @@ bool parseTelemetry(const UnoFrame& frame, UnoTelemetry* out) {
     if (!frame.argInt(i, &v[i])) return false;
   }
   if (v[5] < 0 || v[5] > 65535 || v[6] < 0) return false;
+  int32_t laser = -1;
+  const bool hasLaser = frame.argCount() >= 8;
+  if (hasLaser && !frame.argInt(7, &laser)) return false;
   out->cm = v[0];
   out->line[0] = v[1];
   out->line[1] = v[2];
@@ -53,6 +56,8 @@ bool parseTelemetry(const UnoFrame& frame, UnoTelemetry* out) {
   out->tilt = v[4];
   out->moveSeq = static_cast<uint16_t>(v[5]);
   out->rxErrors = static_cast<uint32_t>(v[6]);
+  out->hasLaser = hasLaser;
+  out->laser = laser;
   return true;
 }
 

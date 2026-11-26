@@ -262,6 +262,10 @@ def test_formatting() -> None:
     assert bench.format_tel(tel) == (
         "TEL   front    none   line A0/A1/A2  512  600  480   tilt -20   moving seq 7   rx errors 3"
     )
+    tel = Frame("TEL", 0, ["55", "512", "600", "480", "0", "0", "0", "87"])
+    assert bench.format_tel(tel).endswith("rx errors 0   laser 87 cm")
+    tel = Frame("TEL", 0, ["55", "512", "600", "480", "0", "0", "0", "-2"])
+    assert bench.format_tel(tel).endswith("laser not found")
     assert bench.format_done(Frame("DONE", 5, ["OBST", "40", "14", "350"])) == (
         "DONE  seq 5 OBST  front 40 -> 14 cm  ran 350 ms"
     )

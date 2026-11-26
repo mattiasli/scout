@@ -79,6 +79,7 @@ void Scout::receive(uint8_t byte, uint32_t now) {
 
 void Scout::update(uint32_t now) {
   ranger_.update(now);
+  laser_.update(now);
 
   if (motion_.seq != 0) {
     const char* reason = 0;
@@ -316,7 +317,8 @@ void Scout::sendTelemetry() {
       .add(static_cast<int32_t>(right))
       .add(static_cast<int32_t>(tilt_))
       .add(static_cast<int32_t>(motion_.seq))
-      .add(toArg(parser_.rxErrors()));
+      .add(toArg(parser_.rxErrors()))
+      .add(static_cast<int32_t>(laser_.cm()));
   send(tel);
 }
 

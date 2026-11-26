@@ -15,6 +15,9 @@ Version 0.1.0.
 - Mixes `MOVE vx, vy, wz` into the 74HC595 direction byte and the two speed PWMs (D5, D6).
 - Pings the HC-SR04 every 60 ms without blocking; the echo is timed by a pin-change
   interrupt on D13.
+- Reads the VL53L1X laser distance sensor on I²C (A4 = SDA, A5 = SCL) if one is fitted,
+  without blocking: it measures every 100 ms by itself and the firmware collects each
+  measurement. Without one, everything else runs the same and `TEL` reports `-2`.
 - Drives the tilt servo from Timer1 hardware PWM (50 Hz on D9): no interrupts and no
   jitter. Timer0 (`millis()` and the D5/D6 PWM) is untouched.
 
@@ -54,6 +57,15 @@ These hold whatever the host sends:
 - **Ultrasonic readings.** A ping with no echo by the next ping (60 ms) gives `-1`. An
   echo longer than 400 cm is discarded and the last reading stays, but only for 200 ms;
   after that, with nothing plausible in between, the reading becomes `-1`.
+- **Laser readings.** Long distance mode with a 100 ms timing budget, one measurement
+  every 100 ms. The start-up sequence and settings are those of ST's ultra lite driver
+  (its default settings, one calibration measurement, then continuous measuring). A
+  measurement with any status other than "valid" is no reading; the last distance is
+  kept for 250 ms, then `TEL` says `-1`. Three failed I²C exchanges in a row, or a sensor
+  that keeps not measuring, count as no sensor (`-2`), and it's looked for again every
+  2 s. I²C runs at 100 kHz (the level shifter on the sensor board is too slow for
+  400 kHz) with a 5 ms timeout, so a stuck bus can't stall `loop()`. The laser doesn't
+  stop moves; the obstacle stop uses the ultrasonic only.
 - **`ms_ran` in `DONE`** is the real time between motors on and motors off (it can be a
   millisecond over `ms`).
 - **Reset flags.** `BOOT` reports `MCUSR` as read at reset. The stock UNO bootloader
@@ -86,20 +98,21 @@ Speed percent to PWM: 0 stays 0, and 1..100 maps linearly onto `MINPWM`..255.
 ```
 scout_uno.ino          setup() and loop(); the watchdog
 src/early_boot.cpp     .init3: OE# high, MCUSR saved and cleared, watchdog off
-src/board.cpp          the hardware: pins, 74HC595, PWM, Timer1 servo, echo interrupt, ADC, serial
+src/board.cpp          the hardware: pins, 74HC595, PWM, Timer1 servo, echo interrupt, ADC, I²C, serial
 src/pins.h             the shield's pin map
 src/core/              board-independent logic, no Arduino headers (built by the host tests too)
   scout.*              requests, the move/test state machine, obstacle stop, link watchdog, telemetry
   mecanum.*            mixing, PWM mapping, the 25 % rule
   ranger.*             ultrasonic timing and filtering
+  laser.*              VL53L1X laser distance sensor: start-up, polling, readings
   tilt.*               tilt clamp (-40..+40 degrees) and servo pulse
   hardware.h           the functions the core calls; board.cpp and the test fake define them
   config.h             limits, defaults and the PWM mode
 ```
 
 Pins used: D0/D1 serial, D2/D4/D7/D8 74HC595, D5/D6 PWM, D9 servo, D12/D13 ultrasonic,
-A0-A2 line sensors. D10 and D11 are free. A3 is kept free for battery sensing, and A4/A5
-for a gyroscope. Timer1 belongs to the servo, so don't add the Servo library or use
+A0-A2 line sensors, A4/A5 I²C to the laser distance sensor. D10 and D11 are free. A3 is
+kept free for battery sensing. Timer1 belongs to the servo, so don't add the Servo library or use
 `analogWrite()` on D9/D10.
 
 ## Building

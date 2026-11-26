@@ -161,6 +161,14 @@ TEST(telemetry_parsing) {
   CHECK_EQ(t.tilt, -10);
   CHECK_EQ(t.moveSeq, 42);
   CHECK_EQ(t.rxErrors, 3u);
+  CHECK(!t.hasLaser);  // UNO firmware from before the laser sensor
+  CHECK(scout::parseTelemetry(frameFrom("TEL", 0, {"-1", "512", "600", "480", "-10", "42", "3", "87"}), &t));
+  CHECK(t.hasLaser);
+  CHECK_EQ(t.laser, 87);
+  CHECK_EQ(t.rxErrors, 3u);
+  CHECK(scout::parseTelemetry(frameFrom("TEL", 0, {"-1", "512", "600", "480", "-10", "42", "3", "-2"}), &t));
+  CHECK_EQ(t.laser, -2);
+  CHECK(!scout::parseTelemetry(frameFrom("TEL", 0, {"-1", "512", "600", "480", "-10", "42", "3", "x"}), &t));
   CHECK(!scout::parseTelemetry(frameFrom("TEL", 0, {"-1", "512", "600", "480", "0", "0"}), &t));
   CHECK(!scout::parseTelemetry(frameFrom("TEL", 0, {"x", "512", "600", "480", "0", "0", "0"}), &t));
   CHECK(!scout::parseTelemetry(frameFrom("TEL", 0, {"1", "2", "3", "4", "0", "70000", "0"}), &t));

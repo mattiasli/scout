@@ -60,7 +60,7 @@ breaking the other. An unknown `"t"` from the server gets
 | `t` | When | Fields |
 |---|---|---|
 | `hello` | First message on every connection | `fw`, `uno_fw` (`null` until the UNO answered), `camera` (`"OV3660"`, `"OV2640"`, … or `null`), `psram` (bytes, `0` if none), `max_res`, `mac`, `ip`, `ssid`, `rssi`, `reset` (reset reason) |
-| `tel` | Every 1 s, and every 200 ms while a move runs | `cm` (front distance, `null` = no echo), `line` (`[l, c, r]` raw `0..1023`), `tilt`, `moving` (bool), `light`, `rssi`, `heap` (free bytes), `uno` (bool: UNO answering), `up` (uptime s) |
+| `tel` | Every 1 s, and every 200 ms while a move runs | `cm` (front distance, `null` = no echo), `line` (`[l, c, r]` raw `0..1023`), `tilt`, `moving` (bool), `light`, `rssi`, `heap` (free bytes), `uno` (bool: UNO answering), `up` (uptime s), `laser` (cm to what the camera points at, or a code: `-1` no reading, `-2` no sensor answers, `-3` not a VL53L1X; left out when the UNO doesn't report it, see [uart.md](uart.md)) |
 | `ack` | A request was accepted | `id`, plus request-specific fields (`deg`, `level`) |
 | `done` | A `move` or `test` ended | `id`, `reason` (`time`, `obstacle`, `stopped`, `link`, `replaced`, `error`), `cm_start`, `cm_end` (`null` = no echo), `ms` (how long the motors ran) |
 | `err` | A request failed | `id`, `code` (below), `msg` (short text for logs) |

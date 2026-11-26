@@ -13,6 +13,7 @@ from PIL import Image
 
 from scout.contracts import CarBusy, CarError
 from scout.robot import InvalidRequest, RobotConfig
+from scout.robot.robot import _clean_tel, _laser
 from scout_sim import Disc, Faults, SimCar, World
 
 from .conftest import Harness, fast_physics, plain_world, wait_for
@@ -239,11 +240,26 @@ async def test_camera_error(harness: Harness) -> None:
     assert any(e["kind"] == "camera_error" for e in status.data["recent_events"])
 
 
+def test_laser_readings_and_codes() -> None:
+    assert _clean_tel({"cm": 50, "laser": 87})["laser"] == 87
+    assert "laser" not in _clean_tel({"cm": 50})  # older motor board firmware
+    assert "laser" not in _clean_tel({"cm": 50, "laser": "far"})
+    assert _laser({"laser": 87}) == (87, "ok")
+    assert _laser({"laser": 0}) == (0, "ok")
+    assert _laser({"laser": -1}) == (None, "no reading")
+    assert _laser({"laser": -2}) == (None, "not found")
+    assert _laser({"laser": -3}) == (None, "not a VL53L1X")
+    assert _laser({"laser": -7}) == (None, "unknown")
+    assert _laser({}) == (None, None)
+
+
 async def test_status_online(harness: Harness) -> None:
     await harness.connect()
     data = (await harness.robot.status("car-1")).data
     assert data["online"] is True
     assert data["summary"].startswith("Scout is online. Front distance ")
+    assert data["laser_sensor"] in ("ok", "no reading")
+    assert ("Laser distance " in data["summary"]) == (data["laser_sensor"] == "ok")
     for key in ("firmware", "camera", "wifi", "distance_cm", "line_sensors", "tilt_deg", "light", "activity"):
         assert key in data
     assert data["wifi"]["ssid"] == "sim-wifi"

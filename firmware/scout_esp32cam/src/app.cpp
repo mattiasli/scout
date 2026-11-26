@@ -745,6 +745,8 @@ void Car::sendTelemetry(uint32_t now) {
   } else {
     j.null("line").null("tilt");
   }
+  // Passed on as the UNO reports it, codes included; left out when the UNO doesn't.
+  if (have && tel.hasLaser) j.num("laser", tel.laser);
   j.boolean("moving", moving)
       .num("light", light_.level())
       .num("rssi", WiFi.RSSI())

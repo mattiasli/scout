@@ -336,7 +336,7 @@ class SimCar:
 
     def _tel(self) -> dict[str, Any]:
         uno_ok = not self.faults.uno_offline
-        return {
+        tel: dict[str, Any] = {
             "t": "tel",
             "cm": self.world.ultrasonic() if uno_ok else None,
             "line": self.world.line_sensors() if uno_ok else None,
@@ -348,6 +348,12 @@ class SimCar:
             "uno": uno_ok,
             "up": int(time.monotonic() - self.boot),
         }
+        if uno_ok:
+            # The laser on the tilt panel, simplified: what's straight ahead, without the
+            # ultrasonic's noise (and without using up random numbers).
+            laser = self.world.ultrasonic(noise=False)
+            tel["laser"] = -1 if laser is None else laser
+        return tel
 
     # -- background loops ----------------------------------------------------------
 

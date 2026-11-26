@@ -408,7 +408,19 @@ async def test_hello_and_telemetry_match_the_spec() -> None:
             assert headers[0]["X-Scout-Firmware"] == "0.1.0"
             tel = await s.next(skip_tel=False)
             assert isinstance(tel, dict) and tel["t"] == "tel"
-            assert set(tel) == {"t", "cm", "line", "tilt", "moving", "light", "rssi", "heap", "uno", "up"}
+            assert set(tel) == {
+                "t",
+                "cm",
+                "line",
+                "tilt",
+                "moving",
+                "light",
+                "rssi",
+                "heap",
+                "uno",
+                "up",
+                "laser",
+            }
             conf = {"obst_cm": 30, "min_pwm": 100, "link_ms": 800, "vflip": True, "hmirror": True}
             await s.send(t="welcome", car="car-1", name="Rover", time=1795300000, conf=conf, extra="ignored")
             await wait_for(car.welcomed.is_set)

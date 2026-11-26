@@ -35,6 +35,13 @@ bool takeEcho(uint32_t* widthUs);
 // Raw readings of the three line sensors on A0, A1 and A2 (0..1023).
 void readLine(uint16_t* a0, uint16_t* a1, uint16_t* a2);
 
+// I2C exchanges with the laser distance sensor (VL53L1X at address 0x29). Register
+// addresses are 16 bits. laserWrite() writes `length` bytes (at most 16) to the registers
+// from `reg` on; laserRead() reads `length` bytes from `reg` on. Both return false when
+// the sensor doesn't acknowledge or the bus times out.
+bool laserWrite(uint16_t reg, const uint8_t* data, uint8_t length);
+bool laserRead(uint16_t reg, uint8_t* data, uint8_t length);
+
 // Writes bytes to the host.
 void send(const char* data, uint8_t length);
 

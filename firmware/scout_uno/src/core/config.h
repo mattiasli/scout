@@ -61,6 +61,15 @@ const uint16_t kUsPerCm = 58;        // echo width per cm of distance (out and b
 const int16_t kRangeMaxCm = 400;     // longer readings are implausible and discarded
 const uint16_t kRangeHoldMs = 200;   // a reading older than this (only discards since) becomes -1
 
+// VL53L1X laser distance sensor (laser.h). Each measurement has a 100 ms timing budget
+// in long distance mode, so measurements can't come more often than that.
+const uint16_t kLaserPeriodMs = 100;  // time between measurements
+const uint16_t kLaserPollMs = 10;     // how often to ask whether a measurement is ready
+const uint16_t kLaserHoldMs = 250;    // a reading older than this (only failed ones since) becomes -1
+const uint16_t kLaserStallMs = 500;   // no measurement for this long: start the sensor again
+const uint16_t kLaserRetryMs = 2000;  // time between looks for a missing sensor
+const uint8_t kLaserMaxFailures = 3;  // failed exchanges in a row before the sensor counts as gone
+
 }  // namespace scout
 
 #endif  // SCOUT_UNO_CONFIG_H
