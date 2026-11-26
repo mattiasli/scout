@@ -97,9 +97,12 @@ class RobotConfig:
     follow_confirm_frames: int = 2
     # Once another one in view has looked about as alike as the target (matching at least
     # LEARN_MATCH and no more than follow_lookalike_margin less than the target does), with
-    # the detector about as sure of it, finding the target again after losing it needs a
-    # pick. A box mostly inside the target's (its legs, boxed as well) doesn't count.
+    # the detector at least follow_lookalike_score times as sure of it as it usually is of
+    # the target, finding the target again after losing it needs a pick. A box mostly
+    # inside the target's (its legs, boxed as well) doesn't count. On the floor, a coat
+    # rack hung with dark clothes scored at most about 0.7 times the person followed.
     follow_lookalike_margin: float = 0.15
+    follow_lookalike_score: float = 0.85
     follow_start_wait_s: float = 4.0  # follow returns once it has locked on, or after this
     follow_pick_valid_s: float = 120.0  # how long find's or follow_view's numbers stay valid
     find_min_score: float = 0.35

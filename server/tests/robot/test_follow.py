@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 from collections.abc import Callable
@@ -13,7 +14,7 @@ import pytest
 from scout.contracts import CarBusy, CarError
 from scout.robot import Detection, DetectorUnavailable, InvalidRequest
 from scout.robot.detector import COCO_LABELS
-from scout.robot.robot import _check, _Checking, _lookalike
+from scout.robot.robot import _check, _Checking, _in_view, _lookalike
 from scout.robot.tracker import Choice
 from scout_sim import Cat, World
 
@@ -434,15 +435,31 @@ def test_what_counts_as_a_look_alike() -> None:
 
     def lookalike(other: Detection, matches: tuple[float, float]) -> int | None:
         choice = Choice(0, matches[0], False, "", matches)
-        return _lookalike([target, other], choice, 0.85, score_drop=0.7, margin=0.15)
+        return _lookalike([target, other], choice, 0.85, min_score=0.85, margin=0.15)
 
     assert lookalike(twin, (0.9, 0.85)) == 1  # dressed alike
     assert lookalike(twin, (0.9, 0.7)) is None  # matching less well than the target does
     assert lookalike(twin, (0.55, 0.55)) is None  # nor well at all
     assert lookalike(legs, (0.9, 0.95)) is None  # their own legs, boxed as well
     assert lookalike(rack, (0.9, 0.9)) is None  # the detector is far less sure of it
+    # The coat rack on the floor: as alike as the target close up, detector 0.59, which
+    # is 0.69 of the target's usual 0.85.
+    hung_coats = Detection("person", 0.59, 0.70, 0.39, 0.81, 0.91)
+    assert lookalike(hung_coats, (0.70, 0.71)) is None
     unseen = Choice(None, 0.85, False, "", (0.85,))  # the target out of sight: nothing to compare
-    assert _lookalike([twin], unseen, 0.85, score_drop=0.7, margin=0.15) is None
+    assert _lookalike([twin], unseen, 0.85, min_score=0.85, margin=0.15) is None
+
+
+def test_what_follow_saw_is_logged_box_by_box() -> None:
+    target = Detection("person", 0.49, 0.30, 0.03, 0.68, 0.97)
+    rack = Detection("person", 0.59, 0.70, 0.39, 0.81, 0.91)
+    choice = Choice(0, 0.70, False, "", (0.70, 0.71))
+    assert _in_view([target, rack], choice) == (
+        "*person 0.49 match 0.70 box 0.30,0.03,0.68,0.97 cut off; "
+        "person 0.59 match 0.71 box 0.70,0.39,0.81,0.91"
+    )
+    assert _in_view([rack], Choice(None, None, False, "")) == "person 0.59 box 0.70,0.39,0.81,0.91"
+    assert _in_view([], Choice(None, None, False, "")) == "nothing"
 
 
 # The person follow locks on to, then nobody, then a coat rack where the person was that
@@ -463,13 +480,17 @@ def _person_gone_then_rack() -> ScriptedDetector:
 
 @pytest.mark.detector.with_args(_person_gone_then_rack)
 async def test_follow_holds_back_until_it_is_sure_or_the_ai_confirms(
-    harness: Harness, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="scout.robot")
     monkeypatch.setattr("scout.robot.robot.describe", lambda _image, _det: np.full(60, 1 / 20))
     await harness.connect(world=cat_world())
     await harness.robot.follow("car-1", target="person", seconds=30)
     await wait_for(lambda: bool(follow_state(harness).get("checking")), within=6)
     assert follow_state(harness)["checking"] == "it lost sight of the person and has found one again"
+    held = [r.getMessage() for r in caplog.records if r.getMessage().startswith("follow: holding back")]
+    assert held and "as it lost sight of the person and has found one again" in held[-1], held
+    assert "In view: *person" in held[-1] and " box " in held[-1], held
     for _ in range(5):  # far away, but it doesn't drive towards it
         step = follow_state(harness)["last_step"]
         assert isinstance(step, dict) and step["vx"] == 0, step

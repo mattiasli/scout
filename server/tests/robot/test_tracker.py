@@ -222,6 +222,14 @@ def test_cut_off() -> None:
     assert cut_off(person((0.3, 0.0, 0.7, 0.9)))  # head out of the picture
     assert cut_off(person((0.3, 0.1, 0.7, 1.0)))  # close up, cut off at the knees
     assert cut_off(person((0.0, 0.1, 0.2, 0.9)))  # stepping out on the left
+    # The detector's box often stops a little short of the edge.
+    assert cut_off(person((0.3, 0.03, 0.7, 0.96)))  # close up, the head out of the picture
+    assert cut_off(person((0.04, 0.1, 0.3, 0.9)))
+    assert cut_off(person((0.7, 0.1, 0.96, 0.9)))
+    # The camera sits low: in full view at 2-3 m on the floor, feet came within 4% of the
+    # bottom, which isn't cut off.
+    assert not cut_off(person((0.45, 0.26, 0.62, 0.96)))
+    assert not cut_off(person((0.40, 0.31, 0.57, 0.97)))
 
 
 def test_a_box_cut_off_at_an_edge_may_be_bigger_than_it_looks() -> None:
