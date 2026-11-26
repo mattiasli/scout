@@ -133,16 +133,23 @@ def describe_reset(flags: int) -> str:
     return ", ".join(names) if names else "none reported; the stock bootloader clears them"
 
 
+LASER_CODES = {"-1": "none", "-2": "not found", "-3": "not a VL53L1X"}
+
+
 def format_tel(frame: Frame) -> str:
-    if len(frame.args) != 7:
+    if len(frame.args) not in (7, 8):  # 7 from UNO firmware without the laser sensor
         return f"TEL   (unexpected) {','.join(frame.args)}"
-    cm, left, center, right, tilt, move, rx_errors = frame.args
+    cm, left, center, right, tilt, move, rx_errors = frame.args[:7]
     distance = "none" if cm == "-1" else f"{cm} cm"
     running = f"seq {move}" if move != "0" else "-"
-    return (
+    text = (
         f"TEL   front {distance:>7}   line A0/A1/A2 {left:>4} {center:>4} {right:>4}   "
         f"tilt {tilt:>3}   moving {running}   rx errors {rx_errors}"
     )
+    if len(frame.args) == 8:
+        laser = frame.args[7]
+        text += f"   laser {LASER_CODES.get(laser, laser + ' cm')}"
+    return text
 
 
 def format_done(frame: Frame) -> str:

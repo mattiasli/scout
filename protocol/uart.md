@@ -66,8 +66,8 @@ Out-of-range or malformed requests are rejected and change nothing:
 | `PONG,seq,<fw>,<uptime_s>` | Reply to `PING` | |
 | `ACK,seq[,value]` | A request was accepted | `TILT` returns the applied angle |
 | `ERR,seq,<code>` | A request was rejected | `TYPE`, `ARGS` or `RANGE` |
-| `DONE,seq,<reason>,<cm_start>,<cm_end>,<ms_ran>` | A `MOVE` or `TEST` ended | Reason (below). Front distance in cm when it started and ended, `-1` if there was no echo. How long the motors actually ran |
-| `TEL,0,<cm>,<line_l>,<line_c>,<line_r>,<tilt>,<move_seq>,<rx_errors>` | Every 200 ms | Front distance in cm (`-1` = no echo), the three line sensors as raw `0..1023` readings, current tilt in degrees, seq of the running move (`0` if none), and the receive error count |
+| `DONE,seq,<reason>,<cm_start>,<cm_end>,<ms_ran>` | A `MOVE` or `TEST` ended | Reason (below). Front distance in cm (ultrasonic) when it started and ended, `-1` if there was no echo. How long the motors actually ran |
+| `TEL,0,<cm>,<line_l>,<line_c>,<line_r>,<tilt>,<move_seq>,<rx_errors>,<laser>` | Every 200 ms | Front distance in cm from the ultrasonic sensor (`-1` = no echo), the three line sensors as raw `0..1023` readings, current tilt in degrees, seq of the running move (`0` if none), the receive error count, and the laser distance (below) |
 
 `DONE` reasons:
 
@@ -78,6 +78,20 @@ Out-of-range or malformed requests are rejected and change nothing:
 | `STOP` | Stopped by a `STOP` request |
 | `LINK` | No valid frame from the host for `LINKMS` ms, so the UNO assumed the host is gone |
 | `NEW` | Replaced by a newer `MOVE` or `TEST` |
+
+`laser` in `TEL` comes from the VL53L1X laser distance sensor on the camera's tilt panel,
+so it measures to whatever the camera points at. It's a distance in cm, or a code:
+
+| Value | Meaning |
+|---|---|
+| `-1` | No reading: nothing in range, too little light came back, or nothing measured yet |
+| `-2` | No sensor answers on I²C: none fitted, or it stopped answering (looked for again every 2 s) |
+| `-3` | A chip answers at the sensor's address (0x29), but it isn't a VL53L1X |
+
+UNO firmware from before the laser sensor sends only the first seven `TEL` args, and hosts
+take a missing `laser` to mean there is no laser sensor. `TEL` now has all 8 args a frame
+can carry, so another field needs another message. The laser reading doesn't stop moves;
+the `OBST` check uses the ultrasonic distance only.
 
 ## Rules the UNO always enforces
 

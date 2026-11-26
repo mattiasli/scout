@@ -1,6 +1,7 @@
 #include "board.h"
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
 
@@ -11,6 +12,14 @@
 namespace {
 
 const uint32_t kBaud = 115200;
+
+// The laser distance sensor on I2C (A4 = SDA, A5 = SCL). 100 kHz suits the level shifter
+// on its board, whose 10k pull-ups are too weak for 400 kHz. A bus that hangs gives up
+// after kI2cTimeoutUs and the TWI is reset, so loop() never stalls on it; the longest
+// exchange (a 16-byte write) takes under 2 ms.
+const uint8_t kLaserAddress = 0x29;
+const uint32_t kI2cHz = 100000;
+const uint32_t kI2cTimeoutUs = 5000;
 
 // Timer1 runs the servo: fast PWM (mode 14, TOP = ICR1), clock / 8 = 0.5 us per tick, so
 // 40000 ticks = 20 ms (50 Hz). No interrupts, so the pulse never jitters. Nothing else
@@ -88,6 +97,10 @@ void boardBegin() {
   PCIFR = _BV(PCIF0);  // drop a stale flag
   PCICR |= _BV(PCIE0);
 
+  Wire.begin();
+  Wire.setClock(kI2cHz);
+  Wire.setWireTimeout(kI2cTimeoutUs, true);
+
   Serial.begin(kBaud);
 }
 
@@ -140,6 +153,24 @@ void readLine(uint16_t* a0, uint16_t* a1, uint16_t* a2) {
   *a0 = static_cast<uint16_t>(analogRead(A0));
   *a1 = static_cast<uint16_t>(analogRead(A1));
   *a2 = static_cast<uint16_t>(analogRead(A2));
+}
+
+bool laserWrite(uint16_t reg, const uint8_t* data, uint8_t length) {
+  Wire.beginTransmission(kLaserAddress);
+  Wire.write(static_cast<uint8_t>(reg >> 8));
+  Wire.write(static_cast<uint8_t>(reg & 0xFF));
+  Wire.write(data, length);
+  return Wire.endTransmission() == 0;
+}
+
+bool laserRead(uint16_t reg, uint8_t* data, uint8_t length) {
+  Wire.beginTransmission(kLaserAddress);
+  Wire.write(static_cast<uint8_t>(reg >> 8));
+  Wire.write(static_cast<uint8_t>(reg & 0xFF));
+  if (Wire.endTransmission(false) != 0) return false;  // repeated start, as ST's driver does
+  if (Wire.requestFrom(kLaserAddress, length) != length) return false;
+  for (uint8_t i = 0; i < length; ++i) data[i] = static_cast<uint8_t>(Wire.read());
+  return true;
 }
 
 void send(const char* data, uint8_t length) {

@@ -1,5 +1,5 @@
 // The UNO side of protocol/uart.md: command handling, the move/test state machine, the
-// obstacle stop, the link watchdog and telemetry. Board-independent; it touches the
+// obstacle stop, the link watchdog, the distance sensors and telemetry. Board-independent; it touches the
 // hardware only through scout::hw (hardware.h) and gets the time passed in.
 
 #ifndef SCOUT_UNO_SCOUT_H
@@ -8,6 +8,7 @@
 #include <ScoutLink.h>
 #include <stdint.h>
 
+#include "laser.h"
 #include "mecanum.h"
 #include "ranger.h"
 
@@ -24,13 +25,15 @@ class Scout {
   // Feed every byte received from the host.
   void receive(uint8_t byte, uint32_t now);
 
-  // Call every loop: ranging, end of moves, obstacle stop, link watchdog, telemetry.
+  // Call every loop: both distance sensors, end of moves, obstacle stop, link watchdog,
+  // telemetry.
   void update(uint32_t now);
 
   // Current state, for tests and diagnostics.
   uint16_t runningSeq() const { return motion_.seq; }  // 0 = nothing running
   int8_t tiltDeg() const { return tilt_; }
   int16_t distanceCm() const { return ranger_.cm(); }
+  int16_t laserCm() const { return laser_.cm(); }
   uint8_t obstacleCm() const { return obstacleCm_; }
   uint8_t minPwm() const { return minPwm_; }
   uint16_t linkMs() const { return linkMs_; }
@@ -71,6 +74,7 @@ class Scout {
 
   scoutlink::Parser parser_;
   Ranger ranger_;
+  Laser laser_;
   Motion motion_;
   uint8_t obstacleCm_;
   uint8_t minPwm_;

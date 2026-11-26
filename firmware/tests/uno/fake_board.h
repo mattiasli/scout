@@ -7,6 +7,7 @@
 #define SCOUT_UNO_TESTS_FAKE_BOARD_H
 
 #include <cstdio>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,27 @@ struct Sent {
   }
 };
 
+// A VL53L1X on the I2C bus. It keeps every register written, starts and stops measuring
+// when told to, and has a new measurement ready every periodMs while measuring.
+struct FakeLaser {
+  bool present = false;  // nothing answers until a test fits one
+  uint16_t modelId = 0xEACC;
+  bool booted = true;
+  uint16_t oscCalibrate = 0x0153;  // the sensor's clock calibration (low 10 bits count)
+  uint16_t mm = 0;                 // what each measurement finds
+  uint8_t status = 9;              // raw range status of each measurement (9 = good)
+  uint32_t periodMs = 100;         // a measurement every this long while measuring
+  int failNext = 0;                // the next n exchanges fail, as on a disturbed bus
+
+  std::map<uint16_t, uint8_t> regs;  // everything written
+  bool measuring = false;
+  bool ready = false;
+  uint32_t lastMeasureMs = 0;
+  int starts = 0;           // times continuous measuring was started
+  int exchanges = 0;        // reads and writes, failed ones too
+  unsigned longestWrite = 0;
+};
+
 struct FakeBoard {
   static FakeBoard* active;
 
@@ -49,6 +71,8 @@ struct FakeBoard {
   // is ready right after the ping.
   long echoUs = -1;
   bool echoReady = false;
+
+  FakeLaser laser;
 
   std::vector<Sent> sent;
   uint32_t clock = 0;      // set by the rig so sent frames are time-stamped

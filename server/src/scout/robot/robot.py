@@ -161,7 +161,33 @@ def _clean_tel(msg: dict[str, Any]) -> dict[str, Any]:
     for key in ("moving", "uno"):
         if isinstance(msg.get(key), bool):
             tel[key] = msg[key]
+    laser = _opt_int(msg.get("laser"))
+    if laser is not None and -9 <= laser <= 1000:
+        tel["laser"] = laser
     return tel
+
+
+# The laser distance sensor on the camera's tilt panel reports a distance in cm or one of
+# these codes (protocol/uart.md).
+_LASER_STATES = {-1: "no reading", -2: "not found", -3: "not a VL53L1X"}
+_LASER_TEXT = {
+    "ok": "Laser distance {cm} cm to what the camera points at.",
+    "no reading": "The laser sees nothing in range.",
+    "not found": "The laser distance sensor isn't answering.",
+    "not a VL53L1X": "The sensor on the laser's port isn't a VL53L1X.",
+    "unknown": "The laser distance sensor reports something unknown.",
+}
+
+
+def _laser(tel: dict[str, Any]) -> tuple[int | None, str | None]:
+    """The laser's distance in cm and the sensor's state. ``(None, None)`` when the car
+    doesn't report a laser sensor at all (motor board firmware from before it)."""
+    v = tel.get("laser")
+    if v is None:
+        return None, None
+    if v >= 0:
+        return v, "ok"
+    return None, _LASER_STATES.get(v, "unknown")
 
 
 def _clean_hello(msg: dict[str, Any]) -> dict[str, Any]:
@@ -943,6 +969,9 @@ class Robot:
         parts.append(
             f"Front distance {cm} cm." if cm is not None else "No echo ahead (nothing within range)."
         )
+        laser_cm, laser_state = _laser(tel)
+        if laser_state is not None:
+            parts.append(_LASER_TEXT[laser_state].format(cm=laser_cm))
         if not car.uno_ok:
             parts.append("The motor board isn't answering.")
         data = {
@@ -964,6 +993,9 @@ class Robot:
             "connected_for_s": int(time.time() - (car.connected_since or time.time())),
             "uptime_s": tel.get("up"),
         }
+        if laser_state is not None:
+            data["laser_cm"] = laser_cm
+            data["laser_sensor"] = laser_state
         if car.follow is not None:
             data["follow"] = self._follow_status(car)
         if car.ota_state:

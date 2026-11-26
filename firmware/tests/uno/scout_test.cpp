@@ -656,7 +656,7 @@ TEST(telemetry_every_200_ms_with_its_fields) {
   std::vector<Sent> tel = r.ofType("TEL");
   CHECK_EQ(tel.size(), 1u);
   if (!tel.empty()) {
-    CHECK_EQ(tel[0].text(), "TEL,0,-1,512,600,1023,0,0,0");
+    CHECK_EQ(tel[0].text(), "TEL,0,-1,512,600,1023,0,0,0,-2");  // -2: no laser sensor fitted
     CHECK_EQ(tel[0].at, 200u);
   }
   r.tick(800);
@@ -676,7 +676,23 @@ TEST(telemetry_shows_distance_tilt_move_and_rx_errors) {
   r.tick(200);
   std::vector<Sent> tel = r.ofType("TEL");
   CHECK_EQ(tel.size(), 1u);
-  if (!tel.empty()) CHECK_EQ(tel[0].text(), "TEL,0,42,0,0,0,-30,77,2");
+  if (!tel.empty()) CHECK_EQ(tel[0].text(), "TEL,0,42,0,0,0,-30,77,2,-2");
+}
+
+TEST(telemetry_ends_with_the_laser_distance) {
+  Booted r;
+  r.tick(200);
+  r.hw.laser.present = true;  // fitted after the first look for it
+  r.hw.laser.mm = 1234;
+  r.tick(scout::kLaserRetryMs + 400);
+  std::vector<Sent> tel = r.ofType("TEL");
+  CHECK(!tel.empty());
+  if (!tel.empty()) {
+    CHECK_EQ(tel.front().arg(7), "-2");
+    CHECK_EQ(tel.back().arg(7), "123");
+  }
+  CHECK_EQ(r.car.laserCm(), 123);
+  CHECK_EQ(r.car.distanceCm(), -1);  // the ultrasonic reading stays separate
 }
 
 TEST(telemetry_does_not_drift_or_stop) {

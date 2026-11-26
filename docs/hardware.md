@@ -33,7 +33,8 @@ flashing either board**.
 | D12, D13 | Ultrasonic sensor trigger and echo (forward-facing) |
 | A0, A1, A2 | Three downward-facing line sensors (which side is which is *unverified*) |
 | D10, D11 | Free |
-| A3, A4, A5 | Free, reserved: A3 for battery sensing, A4/A5 (I²C) for a gyroscope |
+| A4, A5 | I²C (SDA, SCL) to the optional laser distance sensor (below). The shield labels this header for a gyroscope |
+| A3 | Free, reserved for battery sensing |
 
 ## Motors
 
@@ -101,6 +102,29 @@ the camera is knocked it can jam, or go back on a tooth or two out; three pictur
 tilts 0, 20 and 40 that look the same, or a tilt of 0 that doesn't look straight ahead,
 show it.
 
+## Laser distance sensor (optional)
+
+A VL53L1X time-of-flight sensor on a small breakout board (marked "VL53L0/1XV2") can sit on
+the camera's tilt panel, facing forward like the lens. It then measures the distance to
+the middle of the picture wherever the camera points, and it sees people and soft things
+(clothes, legs, curtains) that the ultrasonic sensor often misses. In long distance mode
+it reaches about 3.5 m in the dark and less in bright light, with a cone about 27° wide.
+
+The board has its own regulator and a two-MOSFET level shifter on SDA and SCL with
+pull-ups to VIN, so it takes 5 V and talks to the UNO's 5 V I²C directly:
+
+| Sensor pin | Shield pin | Wire |
+|---|---|---|
+| VIN | A4 row, VCC (5 V) | red |
+| GND | A4 row, GND | black |
+| SDA | A4 row, IO | blue |
+| SCL | A5 row, IO | yellow |
+| GPIO1, XSHUT | not connected | |
+
+Leave a slack loop in the wires so the panel can tilt all the way. The UNO firmware
+looks for the sensor at boot and every 2 s after, so the car runs the same without it.
+Its reading is the last field of `TEL` ([protocol/uart.md](../protocol/uart.md)).
+
 ## Power
 
 Two 18650 Li-ion cells (not included in the kit) in the holder on the shield. The kit has
@@ -110,8 +134,9 @@ no battery-level sensing; adding it takes two resistors and pin A3, which is kep
 
 ## Known limits
 
-- The camera and the distance sensor both face forward. Sideways and backward moves are
+- The camera and the distance sensors all face forward. Sideways and backward moves are
   blind.
+- The laser sensor tilts with the camera: tilted down, it measures the floor.
 - There are no wheel encoders and no gyroscope, so distances and turn angles are
   estimates. Mecanum wheels slip, especially sideways.
 - The camera sits roughly 10–15 cm above the floor.

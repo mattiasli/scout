@@ -46,13 +46,15 @@ class SeqCounter {
   uint16_t last_;
 };
 
-// TEL,0,<cm>,<line_l>,<line_c>,<line_r>,<tilt>,<move_seq>,<rx_errors>
+// TEL,0,<cm>,<line_l>,<line_c>,<line_r>,<tilt>,<move_seq>,<rx_errors>[,<laser>]
 struct UnoTelemetry {
   int32_t cm;  // -1 = no echo
   int32_t line[3];
   int32_t tilt;
   uint16_t moveSeq;  // 0 = nothing running
   uint32_t rxErrors;
+  bool hasLaser;  // false when the UNO firmware is older than the laser sensor
+  int32_t laser;  // cm; -1 no reading, -2 no sensor answers, -3 not a VL53L1X
 };
 bool parseTelemetry(const UnoFrame& frame, UnoTelemetry* out);
 
